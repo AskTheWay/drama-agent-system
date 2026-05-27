@@ -1,0 +1,25 @@
+# 敏感配置
+.env
+
+# 数据库
+data/*.db
+
+# 向量索引
+data/*.index
+data/*.meta
+
+# 日志
+data/*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db

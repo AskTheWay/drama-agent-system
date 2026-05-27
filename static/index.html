@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短剧投流素材智能剪辑 Agent 系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --primary: #6366f1; --secondary: #8b5cf6; --accent: #ec4899; }
+        body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+        * { color: #e2e8f0; }
+        a, .nav-link { color: #a5b4fc !important; }
+        .nav-link.active { color: white !important; }
+        .navbar { background: linear-gradient(135deg, #1e1b4b, #312e81); }
+        .navbar * { color: white !important; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; color: #e2e8f0; }
+        .card-header { background: linear-gradient(135deg, var(--primary), var(--secondary));
+                       color: white; font-weight: 600; border-radius: 12px 12px 0 0; }
+        .card-body { color: #cbd5e1; }
+        .form-control, .form-select { background: #0f172a; border: 1px solid #475569; color: #e2e8f0 !important; }
+        .form-control:focus, .form-select:focus { background: #0f172a; border-color: var(--primary); color: #e2e8f0 !important; box-shadow: 0 0 0 0.2rem rgba(99,102,241,0.25); }
+        .form-control::placeholder { color: #64748b; }
+        .form-select option { background: #0f172a; color: #e2e8f0; }
+        textarea.form-control { color: #e2e8f0 !important; }
+        .form-label { color: #94a3b8; }
+        .btn-primary { background: var(--primary); border: none; color: white !important; }
+        .btn-primary:hover { background: var(--secondary); color: white !important; }
+        .btn-outline-light { color: #cbd5e1 !important; border-color: #475569; }
+        .btn-outline-light:hover { background: #334155; color: white !important; }
+        .badge { color: white !important; }
+        .badge-男频 { background: #3b82f6; }
+        .badge-女频 { background: #ec4899; }
+        .badge.bg-dark { background: #334155 !important; color: #e2e8f0 !important; }
+        .badge.bg-secondary { background: #475569 !important; }
+        .badge.bg-info { color: white !important; }
+        .badge.bg-success { color: white !important; }
+        .badge.bg-warning { color: #1e293b !important; }
+        .step-card { position: relative; padding-left: 40px; }
+        .step-number { position: absolute; left: 0; top: 0; width: 32px; height: 32px;
+                       border-radius: 50%; background: var(--primary); color: white;
+                       display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .step-line { position: absolute; left: 15px; top: 36px; bottom: -20px;
+                     width: 2px; background: #334155; }
+        .emotion-bar { height: 60px; background: #0f172a; border-radius: 8px; position: relative; overflow: hidden; }
+        .emotion-fill { height: 100%; border-radius: 8px; transition: width 0.5s; }
+        .segment-block { background: #0f172a; border-left: 3px solid var(--primary);
+                         padding: 12px; margin: 8px 0; border-radius: 0 8px 8px 0; color: #cbd5e1; }
+        .beat-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+                    margin: 0 4px; }
+        .json-view { background: #0d1117; border-radius: 8px; padding: 16px;
+                     font-family: 'Fira Code', monospace; font-size: 13px;
+                     max-height: 500px; overflow-y: auto; color: #7ee787; }
+        .loading { display: none; }
+        .loading.active { display: flex; }
+        .ref-card:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(99,102,241,0.3);
+                          transition: all 0.3s; }
+        .stats-num { font-size: 2rem; font-weight: 700; color: var(--primary); }
+        .text-muted { color: #64748b !important; }
+        .text-warning { color: #fbbf24 !important; }
+        .text-primary { color: var(--primary) !important; }
+        .tab-content { padding-top: 20px; }
+        .nav-tabs { border-bottom-color: #334155; }
+        .nav-tabs .nav-link { border-color: transparent; }
+        .nav-tabs .nav-link.active { background: #1e293b; border-color: #334155 #334155 #1e293b; }
+        .workflow-viz { display: flex; align-items: center; justify-content: center; gap: 20px;
+                        padding: 20px; flex-wrap: wrap; }
+        .workflow-node { background: #0f172a; border: 2px solid #334155; border-radius: 12px;
+                         padding: 16px 24px; text-align: center; min-width: 160px; transition: all 0.3s; color: #e2e8f0; }
+        .workflow-node.active { border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.4); }
+        .workflow-node.done { border-color: #10b981; }
+        .workflow-arrow { font-size: 24px; color: #475569; }
+        .spinner-border { color: var(--primary) !important; }
+        .step-item { border-left: 3px solid #334155; padding: 12px 16px; margin-bottom: 8px; position: relative; }
+        .step-item:last-child { border-left-color: var(--primary); }
+        .step-item .step-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .step-item .step-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+        .step-item .step-time { color: #64748b; font-size: 12px; }
+        .step-item .step-io { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
+        .step-item .step-io-block { background: #0f172a; border-radius: 6px; padding: 8px 12px; }
+        .step-item .step-io-label { color: #64748b; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+        .step-item .step-io-content { color: #cbd5e1; word-break: break-all; }
+        .step-arrow { text-align: center; color: #475569; font-size: 18px; margin: -4px 0; }
+        h6 { color: #94a3b8; }
+        strong { color: #f1f5f9; }
+        small { color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand">
+                <i class="bi bi-film"></i> 短剧投流素材智能剪辑 Agent 系统
+            </span>
+            <span class="text-light opacity-75">LangGraph + RAG + Human-in-the-Loop</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <!-- 顶部统计 -->
+        <div class="row mb-3">
+            <div class="col-md-3"><div class="card text-center p-3">
+                <div class="stats-num" id="stat-refs">0</div>
+                <small class="text-muted">爆款素材库</small>
+            </div></div>
+            <div class="col-md-3"><div class="card text-center p-3">
+                <div class="stats-num" id="stat-analyses">0</div>
+                <small class="text-muted">已分析素材</small>
+            </div></div>
+            <div class="col-md-3"><div class="card text-center p-3">
+                <div class="stats-num" id="stat-plans">0</div>
+                <small class="text-muted">生成方案</small>
+            </div></div>
+            <div class="col-md-3"><div class="card text-center p-3">
+                <div class="stats-num" id="stat-avg-score">0</div>
+                <small class="text-muted">平均质量分</small>
+            </div></div>
+        </div>
+
+        <!-- 主标签页 -->
+        <ul class="nav nav-tabs" id="mainTabs">
+            <li class="nav-item">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-workflow">
+                    <i class="bi bi-diagram-3"></i> Agent 工作流
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-knowledge">
+                    <i class="bi bi-database"></i> 爆款知识库
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history">
+                    <i class="bi bi-clock-history"></i> 历史记录
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-architecture">
+                    <i class="bi bi-cpu"></i> 系统架构
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="tabContent">
+            <!-- Tab 1: Agent 工作流 -->
+            <div class="tab-pane fade show active" id="tab-workflow">
+                <div class="row">
+                    <!-- 输入区 -->
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-header"><i class="bi bi-upload"></i> 素材输入</div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label">素材文件名</label>
+                                    <input type="text" class="form-control" id="input-filename"
+                                           value="赘婿逆袭_投流版V3.mp4" placeholder="输入文件名">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">ASR 转写文本</label>
+                                    <textarea class="form-control" id="input-asr" rows="6"
+                                              placeholder="粘贴 ASR 识别的文本...">三年了，我在李家做了三年赘婿。所有人都看不起我，连保姆都敢对我指手画脚。妻子嫌弃我，岳母骂我是废物。直到那天，我接到了一个电话。少爷，老爷去世了，留下三百亿遗产等您继承。所有人都愣住了。</textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">预设模板</label>
+                                    <select class="form-select" id="template-select">
+                                        <option value="">自定义输入</option>
+                                        <option value="逆袭" selected>男频·逆袭（赘婿翻盘）</option>
+                                        <option value="复仇">女频·复仇（重生千金）</option>
+                                        <option value="战神">男频·战神（兵王归来）</option>
+                                        <option value="甜宠">女频·甜宠（闪婚总裁）</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">运行模式</label>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="mode-human-review">
+                                        <label class="form-check-label" for="mode-human-review">
+                                            人工介入模式（暂停在审核节点）
+                                        </label>
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary w-100" id="btn-analyze" onclick="runWorkflow()">
+                                    <i class="bi bi-play-circle"></i> 启动 Agent 工作流
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 结果区 -->
+                    <div class="col-md-8">
+                        <!-- 工作流可视化 -->
+                        <div class="card mb-3">
+                            <div class="card-header"><i class="bi bi-diagram-3"></i> Agent 工作流状态</div>
+                            <div class="card-body">
+                                <div class="workflow-viz">
+                                    <div class="workflow-node" id="node-1">
+                                        <i class="bi bi-eye" style="font-size:24px"></i><br>
+                                        <strong>原视频理解</strong><br>
+                                        <small class="text-muted">多模态分析</small>
+                                    </div>
+                                    <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
+                                    <div class="workflow-node" id="node-2">
+                                        <i class="bi bi-search" style="font-size:24px"></i><br>
+                                        <strong>策略检索</strong><br>
+                                        <small class="text-muted">双模 RAG</small>
+                                    </div>
+                                    <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
+                                    <div class="workflow-node" id="node-qc">
+                                        <i class="bi bi-shield-check" style="font-size:24px"></i><br>
+                                        <strong>质量检查</strong><br>
+                                        <small class="text-muted">&lt;70 回溯</small>
+                                    </div>
+                                    <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
+                                    <div class="workflow-node" id="node-hr">
+                                        <i class="bi bi-person-check" style="font-size:24px"></i><br>
+                                        <strong>人工审核</strong><br>
+                                        <small class="text-muted">可暂停</small>
+                                    </div>
+                                    <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
+                                    <div class="workflow-node" id="node-3">
+                                        <i class="bi bi-filetype-json" style="font-size:24px"></i><br>
+                                        <strong>方案生成</strong><br>
+                                        <small class="text-muted">JSON Schema</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 加载动画 -->
+                        <div class="loading justify-content-center align-items-center p-5" id="loading">
+                            <div class="spinner-border text-primary me-3"></div>
+                            <span class="fs-5">Agent 正在处理中...</span>
+                        </div>
+
+                        <!-- 执行步骤详情 -->
+                        <div class="card mb-3" id="steps-panel" style="display:none">
+                            <div class="card-header">
+                                <i class="bi bi-list-check"></i> 执行步骤详情
+                                <span class="badge bg-secondary float-end" id="steps-count">0 步</span>
+                            </div>
+                            <div class="card-body" id="steps-list"></div>
+                        </div>
+
+                        <!-- 结果展示 -->
+                        <div id="result-area" style="display:none">
+                            <!-- 节点1结果：素材分析 -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <i class="bi bi-eye"></i> 节点1：原视频深度理解
+                                    <span class="badge bg-success float-end" id="analysis-badge">完成</span>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <h6>钩子分析</h6>
+                                            <div class="segment-block" id="hook-result"></div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <h6>赛道判断</h6>
+                                            <div class="segment-block" id="category-result"></div>
+                                        </div>
+                                    </div>
+                                    <h6 class="mt-3">情绪曲线</h6>
+                                    <div class="d-flex gap-2 flex-wrap" id="emotion-curve"></div>
+                                    <h6 class="mt-3">关键特征</h6>
+                                    <div id="key-features"></div>
+                                </div>
+                            </div>
+
+                            <!-- 节点2结果：策略检索 -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <i class="bi bi-search"></i> 节点2：爆款策略检索 (RAG)
+                                    <span class="badge bg-success float-end" id="strategy-badge">完成</span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="retrieved-refs"></div>
+                                    <div class="mt-3" id="strategy-summary"></div>
+                                </div>
+                            </div>
+
+                            <!-- 人工审核面板 -->
+                            <div class="card mb-3" id="human-review-panel" style="display:none; border-color: #f59e0b;">
+                                <div class="card-header" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+                                    <i class="bi bi-person-check"></i> 人工审核 — 工作流已暂停
+                                    <span class="badge bg-warning text-dark float-end">等待审核</span>
+                                </div>
+                                <div class="card-body">
+                                    <!-- 审核信息 -->
+                                    <div class="row mb-3">
+                                        <div class="col-md-4">
+                                            <h6>质量评分</h6>
+                                            <div class="fs-3 fw-bold" id="review-score">-</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <h6>重试次数</h6>
+                                            <div class="fs-3 fw-bold" id="review-retry">0</div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <h6>赛道判断</h6>
+                                            <div id="review-category">-</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 钩子分析 -->
+                                    <h6>钩子分析</h6>
+                                    <div class="segment-block mb-3" id="review-hook">-</div>
+
+                                    <!-- 策略总结 -->
+                                    <h6>匹配策略</h6>
+                                    <div class="segment-block mb-3" id="review-strategy">-</div>
+
+                                    <!-- 审核操作 -->
+                                    <hr style="border-color: #475569;">
+                                    <div class="mb-3">
+                                        <label class="form-label">审核意见（打回时填写改进要求）</label>
+                                        <textarea class="form-control" id="review-feedback" rows="3"
+                                                  placeholder="例如：钩子不够吸引人，需要更强烈的冲突感..."></textarea>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-success flex-fill" onclick="resumeHumanReview(true)">
+                                            <i class="bi bi-check-circle"></i> 通过 — 生成方案
+                                        </button>
+                                        <button class="btn btn-danger flex-fill" onclick="resumeHumanReview(false)">
+                                            <i class="bi bi-x-circle"></i> 打回 — 重新检索
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 节点3结果：剪辑方案 -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <i class="bi bi-filetype-json"></i> 节点3：剪辑方案 (JSON Schema)
+                                    <span class="badge bg-success float-end" id="plan-badge">完成</span>
+                                </div>
+                                <div class="card-body">
+                                    <!-- 片段时间线 -->
+                                    <h6>剪辑片段</h6>
+                                    <div id="segments-timeline"></div>
+
+                                    <!-- 音画卡点 -->
+                                    <h6 class="mt-3">音画卡点</h6>
+                                    <div id="beat-points"></div>
+
+                                    <!-- 预估指标 -->
+                                    <div class="row mt-3">
+                                        <div class="col-md-4"><div class="segment-block text-center">
+                                            <small class="text-muted">预估 CTR</small>
+                                            <div class="fs-4 fw-bold text-primary" id="est-ctr">-</div>
+                                        </div></div>
+                                        <div class="col-md-4"><div class="segment-block text-center">
+                                            <small class="text-muted">预估 3秒停留率</small>
+                                            <div class="fs-4 fw-bold text-primary" id="est-retention">-</div>
+                                        </div></div>
+                                        <div class="col-md-4"><div class="segment-block text-center">
+                                            <small class="text-muted">方案质量分</small>
+                                            <div class="fs-4 fw-bold text-primary" id="quality-score">-</div>
+                                        </div></div>
+                                    </div>
+
+                                    <!-- JSON 原文 -->
+                                    <div class="mt-3">
+                                        <button class="btn btn-sm btn-outline-light" onclick="toggleJson()">
+                                            <i class="bi bi-code-slash"></i> 查看完整 JSON
+                                        </button>
+                                        <div class="json-view mt-2" id="json-output" style="display:none"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: 爆款知识库 -->
+            <div class="tab-pane fade" id="tab-knowledge">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="search-input"
+                                   placeholder="语义搜索爆款策略...">
+                            <button class="btn btn-primary" onclick="searchRefs()">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="filter-category" onchange="loadRefs()">
+                            <option value="">全部赛道</option>
+                            <option value="男频">男频</option>
+                            <option value="女频">女频</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row" id="refs-list"></div>
+            </div>
+
+            <!-- Tab 3: 历史记录 -->
+            <div class="tab-pane fade" id="tab-history">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header"><i class="bi bi-bar-chart"></i> 分析记录（点击查看详情）</div>
+                            <div class="card-body" id="history-analyses"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header"><i class="bi bi-file-earmark-json"></i> 剪辑方案（点击查看详情）</div>
+                            <div class="card-body" id="history-plans"></div>
+                        </div>
+                        <!-- 详情弹窗 -->
+                        <div class="card mt-3" id="detail-panel" style="display:none">
+                            <div class="card-header"><i class="bi bi-eye"></i> 详情 <button class="btn btn-sm btn-outline-light float-end" onclick="document.getElementById('detail-panel').style.display='none'">关闭</button></div>
+                            <div class="card-body json-view" id="detail-content" style="max-height:600px"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: 系统架构 -->
+            <div class="tab-pane fade" id="tab-architecture">
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-cpu"></i> 系统架构与技术栈</div>
+                    <div class="card-body">
+                        <pre class="json-view" style="font-size:14px; color: #7ee787;">
+┌──────────────────────────────────────────────────────────────────────┐
+│                 短剧投流素材智能剪辑 Agent 系统 (LangGraph)               │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────┐    ┌───────────────────────────────────────────────┐  │
+│  │  前端页面  │───→│              FastAPI 后端                     │  │
+│  │ HTML/JS  │←───│  /api/analyze | /api/analyze_interrupt | /resume│ │
+│  └──────────┘    └────────────────────┬──────────────────────────┘  │
+│                                       │                              │
+│                    ┌──────────────────▼──────────────────┐          │
+│                    │     LangGraph StateGraph            │          │
+│                    │                                    │          │
+│                    │  ┌──────────┐                      │          │
+│                    │  │ analyze  │ 节点1: 原视频理解      │          │
+│                    │  │ ASR+帧   │ 多模态分析            │          │
+│                    │  └────┬─────┘                      │          │
+│                    │       ▼                            │          │
+│                    │  ┌──────────┐                      │          │
+│                    │  │ retrieve │ 节点2: 策略检索       │          │
+│                    │  │ RAG双模  │ 元数据+向量           │          │
+│                    │  └────┬─────┘                      │          │
+│                    │       ▼                            │          │
+│                    │  ┌──────────────┐                  │          │
+│                    │  │quality_check │ 质量检查           │          │
+│                    │  │  评分 < 70?  │──────────┐       │          │
+│                    │  └──────┬───────┘          │       │          │
+│                    │         │ 合格             │ 不合格  │          │
+│                    │         ▼                 ▼       │          │
+│                    │  ┌──────────────┐  ┌──────────┐   │          │
+│                    │  │ human_review │  │ 回溯重试  │   │          │
+│                    │  │  人工介入点   │  │retry+1   │───┘          │
+│                    │  │ (可暂停等待) │  └──────────┘              │
+│                    │  └──────┬───────┘                             │
+│                    │         │ 通过/打回                            │
+│                    │         ▼                                     │
+│                    │  ┌──────────┐                                 │
+│                    │  │ generate │ 节点3: 方案生成                   │
+│                    │  │ JSON Mode│ Schema 强制输出                  │
+│                    │  └──────────┘                                 │
+│                    └───────────────────────────────────────┘       │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  数据层: SQLite + FAISS 向量索引 + 阿里云 Embedding API        │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  数据飞轮: 投流效果回传 → score 加权更新 → 知识库自优化        │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  技术栈: LangGraph · LangChain · mllm · ASR · RAG · FAISS          │
+│          JSON Mode · FastAPI · Human-in-the-Loop · Backtracking     │
+└──────────────────────────────────────────────────────────────────────┘
+                        </pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    // ========== 模板数据 ==========
+    const TEMPLATES = {
+        '逆袭': {
+            filename: '赘婿逆袭_投流版V3.mp4',
+            asr: '三年了，我在李家做了三年赘婿。所有人都看不起我，连保姆都敢对我指手画脚。妻子嫌弃我，岳母骂我是废物。直到那天，我接到了一个电话。少爷，老爷去世了，留下三百亿遗产等您继承。所有人都愣住了。'
+        },
+        '复仇': {
+            filename: '重生千金_复仇篇V2.mp4',
+            asr: '上一世，我为了那个男人放弃了一切，最后却被他和小三联手害死。重生回到婚礼当天，这一次，我微笑着摘下了婚戒。对不起，这婚，我不结了。全场震惊。'
+        },
+        '战神': {
+            filename: '战神归来_燃向V5.mp4',
+            asr: '五年前，他被陷害入狱，家族覆灭。五年后，他从战场归来，身后是十万铁血将士。跪！所有人齐刷刷跪下。曾经欺辱他的人，一个都跑不掉。'
+        },
+        '甜宠': {
+            filename: '闪婚总裁_甜蜜V1.mp4',
+            asr: '妈给我安排的相亲对象，说是普通上班族。穿着朴素，开着十万块的车。直到那天，我不小心看到了他钱包里的黑卡。老婆，其实我是星辰集团的总裁。'
+        },
+    };
+
+    // ========== 初始化 ==========
+    window.onload = () => { loadStats(); loadRefs(); };
+
+    document.getElementById('template-select').addEventListener('change', function() {
+        const t = TEMPLATES[this.value];
+        if (t) {
+            document.getElementById('input-filename').value = t.filename;
+            document.getElementById('input-asr').value = t.asr;
+        }
+    });
+
+    // ========== 统计数据 ==========
+    async function loadStats() {
+        const refs = await fetch('/api/references').then(r => r.json());
+        const analyses = await fetch('/api/analyses').then(r => r.json());
+        const plans = await fetch('/api/plans').then(r => r.json());
+
+        document.getElementById('stat-refs').textContent = refs.length;
+        document.getElementById('stat-analyses').textContent = analyses.length;
+        document.getElementById('stat-plans').textContent = plans.length;
+
+        if (plans.length > 0) {
+            const avg = plans.reduce((s, p) => s + (p.quality_score || 0), 0) / plans.length;
+            document.getElementById('stat-avg-score').textContent = avg.toFixed(1);
+        }
+    }
+
+    // ========== 全局状态 ==========
+    let pausedState = null;  // 暂停时保存的工作流状态
+
+    // ========== 运行工作流 ==========
+    async function runWorkflow() {
+        const asr = document.getElementById('input-asr').value.trim();
+        const filename = document.getElementById('input-filename').value.trim();
+        if (!asr) { alert('请输入 ASR 文本'); return; }
+
+        const humanMode = document.getElementById('mode-human-review').checked;
+
+        // 重置状态
+        document.getElementById('result-area').style.display = 'none';
+        document.getElementById('human-review-panel').style.display = 'none';
+        document.getElementById('loading').classList.add('active');
+        document.getElementById('btn-analyze').disabled = true;
+        pausedState = null;
+
+        ['node-1', 'node-2', 'node-qc', 'node-hr', 'node-3'].forEach(id => {
+            document.getElementById(id).classList.remove('active', 'done');
+        });
+
+        // 模拟节点进度
+        setTimeout(() => document.getElementById('node-1').classList.add('active'), 500);
+        setTimeout(() => { document.getElementById('node-1').classList.remove('active'); document.getElementById('node-1').classList.add('done'); }, 3000);
+        setTimeout(() => document.getElementById('node-2').classList.add('active'), 3500);
+        setTimeout(() => { document.getElementById('node-2').classList.remove('active'); document.getElementById('node-2').classList.add('done'); }, 6000);
+        setTimeout(() => document.getElementById('node-qc').classList.add('active'), 6500);
+        setTimeout(() => { document.getElementById('node-qc').classList.remove('active'); document.getElementById('node-qc').classList.add('done'); }, 8000);
+        if (humanMode) {
+            setTimeout(() => document.getElementById('node-hr').classList.add('active'), 8500);
+        } else {
+            setTimeout(() => document.getElementById('node-hr').classList.add('done'), 8500);
+        }
+
+        try {
+            const endpoint = humanMode ? '/api/analyze_interrupt' : '/api/analyze';
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({asr_text: asr, filename: filename}),
+            });
+            const data = await resp.json();
+
+            if (humanMode && data.status === 'paused') {
+                // 暂停模式：显示审核面板
+                renderPartialResult(data);
+                document.getElementById('human-review-panel').style.display = 'block';
+                document.getElementById('review-score').textContent = (data.state?.quality_score || 0).toFixed(1);
+                document.getElementById('review-retry').textContent = data.state?.retry_count || 0;
+                pausedState = data.state;
+            } else {
+                // 自动模式或已完成
+                renderResult(data);
+                document.getElementById('node-3').classList.remove('active');
+                document.getElementById('node-3').classList.add('done');
+            }
+        } catch (e) {
+            alert('请求失败: ' + e.message);
+        } finally {
+            document.getElementById('loading').classList.remove('active');
+            document.getElementById('btn-analyze').disabled = false;
+            loadStats();
+        }
+    }
+
+    // ========== 人工审核恢复 ==========
+    async function resumeHumanReview(approved) {
+        if (!pausedState) { alert('无暂停状态'); return; }
+
+        const feedback = document.getElementById('review-feedback').value.trim();
+        document.getElementById('human-review-panel').style.display = 'none';
+        document.getElementById('loading').classList.add('active');
+
+        // 显示节点3进度
+        setTimeout(() => document.getElementById('node-3').classList.add('active'), 500);
+
+        try {
+            const resp = await fetch('/api/resume', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    state: pausedState,
+                    approved: approved,
+                    feedback: feedback,
+                }),
+            });
+            const data = await resp.json();
+            renderResult(data);
+
+            document.getElementById('node-3').classList.remove('active');
+            document.getElementById('node-3').classList.add('done');
+        } catch (e) {
+            alert('恢复失败: ' + e.message);
+        } finally {
+            document.getElementById('loading').classList.remove('active');
+            document.getElementById('btn-analyze').disabled = false;
+            pausedState = null;
+            loadStats();
+        }
+    }
+
+    // ========== 渲染暂停时的部分结果 ==========
+    function renderPartialResult(data) {
+        document.getElementById('result-area').style.display = 'block';
+        renderSteps(data.steps || []);
+        const state = data.state || {};
+
+        // 节点1：分析结果
+        const a = state.analysis || {};
+        const hook = a.hook_analysis || {};
+        document.getElementById('hook-result').innerHTML = `
+            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
+            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
+            <strong>效果预估：</strong>${((hook.effectiveness || 0) * 100).toFixed(0)}%
+        `;
+        document.getElementById('category-result').innerHTML = `
+            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
+            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
+        `;
+
+        const ec = a.emotion_curve || [];
+        document.getElementById('emotion-curve').innerHTML = ec.map(p => `
+            <div class="text-center" style="width:80px">
+                <div class="emotion-bar">
+                    <div class="emotion-fill" style="width:${(p.intensity||0)*100}%;
+                         background: linear-gradient(to top, #3b82f6, #ef4444)"></div>
+                </div>
+                <small class="text-muted">${p.time||''}</small><br>
+                <small>${p.label||p.emotion||p.name||''}</small>
+            </div>
+        `).join('');
+
+        const kf = a.key_features || [];
+        document.getElementById('key-features').innerHTML = kf.map(f =>
+            `<span class="badge bg-dark me-1 mb-1" style="font-size:13px">${f}</span>`
+        ).join('');
+
+        // 节点2：策略检索
+        const s = state.strategy || {};
+        const refs = s.retrieved_refs || [];
+        document.getElementById('retrieved-refs').innerHTML = refs.length > 0 ?
+            '<div class="row">' + refs.map(r => `
+                <div class="col-md-4 mb-2">
+                    <div class="segment-block ref-card">
+                        <strong>${r.title}</strong><br>
+                        <small class="text-muted">${r.hook_text || ''}</small><br>
+                        <span class="badge bg-info">${r.category}/${r.sub_category}</span>
+                        ${r.similarity ? `<span class="badge bg-secondary">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
+                        <span class="badge bg-warning text-dark">得分 ${r.score || '-'}</span>
+                    </div>
+                </div>
+            `).join('') + '</div>' : '<p class="text-muted">无匹配结果</p>';
+
+        document.getElementById('strategy-summary').innerHTML = `
+            <div class="segment-block">
+                <h6>策略总结</h6>
+                <p>${s.strategy_summary || '-'}</p>
+                <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
+                <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
+            </div>
+        `;
+
+        // 节点3：暂未生成
+        document.getElementById('segments-timeline').innerHTML = '<p class="text-muted">等待人工审核后生成...</p>';
+        document.getElementById('beat-points').innerHTML = '';
+        document.getElementById('est-ctr').textContent = '-';
+        document.getElementById('est-retention').textContent = '-';
+        document.getElementById('quality-score').textContent = '-';
+        document.getElementById('json-output').textContent = '等待审核...';
+
+        // 填充审核面板内容
+        document.getElementById('review-category').innerHTML = `
+            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
+            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
+        `;
+        document.getElementById('review-hook').innerHTML = `
+            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
+            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
+            <strong>效果预估：</strong>${((hook.effectiveness || 0) * 100).toFixed(0)}%
+        `;
+        document.getElementById('review-strategy').innerHTML = `
+            <p class="mb-1">${s.strategy_summary || '-'}</p>
+            <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
+            <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
+        `;
+    }
+
+    // ========== 渲染结果 ==========
+    function renderResult(data) {
+        document.getElementById('result-area').style.display = 'block';
+        renderSteps(data.steps || []);
+
+        // 节点1：分析结果
+        const a = data.analysis || {};
+        const hook = a.hook_analysis || {};
+        document.getElementById('hook-result').innerHTML = `
+            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
+            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
+            <strong>效果预估：</strong>${(hook.effectiveness * 100).toFixed(0)}%
+        `;
+        document.getElementById('category-result').innerHTML = `
+            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
+            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
+        `;
+
+        // 情绪曲线
+        const ec = a.emotion_curve || [];
+        document.getElementById('emotion-curve').innerHTML = ec.map(p => `
+            <div class="text-center" style="width:80px">
+                <div class="emotion-bar">
+                    <div class="emotion-fill" style="width:${(p.intensity||0)*100}%;
+                         background: linear-gradient(to top, #3b82f6, #ef4444)"></div>
+                </div>
+                <small class="text-muted">${p.time||''}</small><br>
+                <small>${p.label||p.emotion||p.name||''}</small>
+            </div>
+        `).join('');
+
+        // 关键特征
+        const kf = a.key_features || [];
+        document.getElementById('key-features').innerHTML = kf.map(f =>
+            `<span class="badge bg-dark me-1 mb-1" style="font-size:13px">${f}</span>`
+        ).join('');
+
+        // 节点2：策略检索
+        const s = data.strategy || {};
+        const refs = s.retrieved_refs || [];
+        document.getElementById('retrieved-refs').innerHTML = refs.length > 0 ?
+            '<div class="row">' + refs.map(r => `
+                <div class="col-md-4 mb-2">
+                    <div class="segment-block ref-card">
+                        <strong>${r.title}</strong><br>
+                        <small class="text-muted">${r.hook_text || ''}</small><br>
+                        <span class="badge bg-info">${r.category}/${r.sub_category}</span>
+                        ${r.similarity ? `<span class="badge bg-secondary">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
+                        <span class="badge bg-warning text-dark">得分 ${r.score || '-'}</span>
+                    </div>
+                </div>
+            `).join('') + '</div>' : '<p class="text-muted">无匹配结果</p>';
+
+        document.getElementById('strategy-summary').innerHTML = `
+            <div class="segment-block">
+                <h6>策略总结</h6>
+                <p>${s.strategy_summary || '-'}</p>
+                <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
+                <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
+            </div>
+        `;
+
+        // 节点3：剪辑方案
+        const p = data.plan || {};
+        const segments = p.segments || [];
+        document.getElementById('segments-timeline').innerHTML = segments.map(seg => `
+            <div class="segment-block">
+                <div class="d-flex justify-content-between">
+                    <strong>片段 ${seg.segment_id}: ${seg.scene_description}</strong>
+                    <span class="badge bg-primary">${seg.start_time} → ${seg.end_time}</span>
+                </div>
+                <div class="row mt-2 small">
+                    <div class="col-md-4"><strong>运镜：</strong>${seg.camera_movement}</div>
+                    <div class="col-md-4"><strong>BGM：</strong>${seg.bgm_cue}</div>
+                    <div class="col-md-4"><strong>转场：</strong>${seg.transition}</div>
+                </div>
+                <div class="row mt-1 small">
+                    <div class="col-md-6"><strong>字幕：</strong>${seg.text_overlay}</div>
+                    <div class="col-md-3"><strong>情绪：</strong>${seg.emotion_target}</div>
+                    <div class="col-md-3"><strong>转化：</strong><span class="text-warning">${seg.conversion_hook || '-'}</span></div>
+                </div>
+            </div>
+        `).join('');
+
+        // 音画卡点
+        const bp = p.beat_points || [];
+        document.getElementById('beat-points').innerHTML = bp.map(b => `
+            <span class="beat-dot" style="background: hsl(${b.intensity*120}, 70%, 50%)" title="${b.description}"></span>
+            <small>${b.time} ${b.type}</small>
+        `).join(' &nbsp; ');
+
+        // 指标
+        document.getElementById('est-ctr').textContent = ((p.estimated_ctr || 0) * 100).toFixed(1) + '%';
+        document.getElementById('est-retention').textContent = ((p.estimated_retention || 0) * 100).toFixed(1) + '%';
+        document.getElementById('quality-score').textContent = (p.quality_score || data.plan?.quality_score || '-');
+
+        // JSON 原文
+        document.getElementById('json-output').textContent = JSON.stringify(p, null, 2);
+    }
+
+    function toggleJson() {
+        const el = document.getElementById('json-output');
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // ========== 执行步骤详情 ==========
+    function renderSteps(steps) {
+        const panel = document.getElementById('steps-panel');
+        const list = document.getElementById('steps-list');
+        if (!steps || steps.length === 0) {
+            panel.style.display = 'none';
+            return;
+        }
+        panel.style.display = 'block';
+        document.getElementById('steps-count').textContent = steps.length + ' 步';
+
+        const nodeNames = {
+            'analyze': '原视频深度理解',
+            'retrieve': '爆款策略检索',
+            'quality_check': '质量检查',
+            'retry_increment': '回溯重试',
+            'human_review': '人工审核',
+            'generate': '剪辑方案生成',
+        };
+        const nodeColors = {
+            'analyze': '#3b82f6',
+            'retrieve': '#8b5cf6',
+            'quality_check': '#10b981',
+            'retry_increment': '#f59e0b',
+            'human_review': '#f59e0b',
+            'generate': '#ec4899',
+        };
+
+        list.innerHTML = steps.map((step, i) => {
+            const color = nodeColors[step.node] || '#6366f1';
+            const name = nodeNames[step.node] || step.node;
+            const arrow = i < steps.length - 1 ? '<div class="step-arrow"><i class="bi bi-arrow-down"></i></div>' : '';
+            return `
+                <div class="step-item" style="border-left-color: ${color}">
+                    <div class="step-header">
+                        <span class="step-badge" style="background: ${color}; color: white;">${step.node}</span>
+                        <strong>${name}</strong>
+                        <span class="step-time">${step.duration_ms}ms</span>
+                        <span class="step-time">${step.timestamp || ''}</span>
+                    </div>
+                    <div class="step-io">
+                        <div class="step-io-block">
+                            <div class="step-io-label">输入</div>
+                            <div class="step-io-content">${formatStepData(step.input)}</div>
+                        </div>
+                        <div class="step-io-block">
+                            <div class="step-io-label">输出</div>
+                            <div class="step-io-content">${formatStepData(step.output)}</div>
+                        </div>
+                    </div>
+                </div>
+                ${arrow}`;
+        }).join('');
+    }
+
+    function formatStepData(data) {
+        if (!data) return '-';
+        return Object.entries(data).map(([k, v]) => {
+            let val = v;
+            if (Array.isArray(v)) val = v.join(', ');
+            else if (typeof v === 'object') val = JSON.stringify(v);
+            return `<div><span style="color:#64748b">${k}:</span> ${val}</div>`;
+        }).join('');
+    }
+
+    // ========== 知识库 ==========
+    async function loadRefs() {
+        const category = document.getElementById('filter-category').value;
+        const url = category ? `/api/references?category=${encodeURIComponent(category)}` : '/api/references';
+        const refs = await fetch(url).then(r => r.json());
+
+        document.getElementById('refs-list').innerHTML = refs.map(r => `
+            <div class="col-md-4 mb-3">
+                <div class="card ref-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <strong>${r.title}</strong>
+                            <span class="badge badge-${r.category}">${r.category}</span>
+                        </div>
+                        <p class="mt-2 mb-1"><small>${r.hook_text}</small></p>
+                        <span class="badge bg-secondary">${r.sub_category}</span>
+                        <span class="badge bg-info">${r.hook_type}</span>
+                        ${r.tags.map(t => `<span class="badge bg-dark">${t}</span>`).join(' ')}
+                        <div class="mt-2 small text-muted">
+                            CTR: ${(r.ctr*100).toFixed(1)}% | 3s停留: ${(r.retention_3s*100).toFixed(0)}% | 完播: ${(r.completion_rate*100).toFixed(0)}% | 得分: ${r.score}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async function searchRefs() {
+        const query = document.getElementById('search-input').value.trim();
+        if (!query) return;
+        const refs = await fetch(`/api/search?query=${encodeURIComponent(query)}`, {method: 'POST'}).then(r => r.json());
+        document.getElementById('refs-list').innerHTML = refs.map(r => `
+            <div class="col-md-4 mb-3">
+                <div class="card ref-card">
+                    <div class="card-body">
+                        <strong>${r.title}</strong>
+                        <span class="badge badge-${r.category}">${r.category}</span>
+                        ${r.similarity ? `<span class="badge bg-success">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
+                        <p class="mt-2 mb-1"><small>${r.hook_text || ''}</small></p>
+                        <span class="badge bg-secondary">${r.sub_category}</span>
+                        <span class="badge bg-warning text-dark">得分 ${r.score}</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // ========== 历史记录 ==========
+    // 缓存历史数据
+    let historyAnalyses = [];
+    let historyPlans = [];
+
+    document.querySelector('[data-bs-target="#tab-history"]').addEventListener('shown.bs.tab', async () => {
+        historyAnalyses = await fetch('/api/analyses').then(r => r.json());
+        document.getElementById('history-analyses').innerHTML = historyAnalyses.map((a, i) => `
+            <div class="segment-block" style="cursor:pointer" onclick="showAnalysisDetail(${i})">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong>${a.filename || '-'}</strong>
+                    <span class="badge badge-${a.category || ''}">${a.category || '-'}/${a.sub_category || '-'}</span>
+                </div>
+                <p class="mb-0 small mt-1">${(a.key_features || []).join(', ')}</p>
+                <small class="text-muted">ID: ${a.id} | 点击查看详情</small>
+            </div>
+        `).join('') || '<p class="text-muted">暂无记录</p>';
+
+        historyPlans = await fetch('/api/plans').then(r => r.json());
+        document.getElementById('history-plans').innerHTML = historyPlans.map((p, i) => {
+            const plan = p.plan_json || {};
+            return `<div class="segment-block" style="cursor:pointer" onclick="showPlanDetail(${i})">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong>${plan.title || '方案#' + p.id}</strong>
+                    <div>
+                        <span class="badge bg-primary">质量 ${p.quality_score?.toFixed(1) || '-'}</span>
+                        <span class="badge bg-secondary">${p.status}</span>
+                    </div>
+                </div>
+                <p class="mb-0 small mt-1">${plan.strategy_summary || '-'}</p>
+                <div class="small text-muted">
+                    CTR: ${((plan.estimated_ctr||0)*100).toFixed(1)}% |
+                    停留: ${((plan.estimated_retention||0)*100).toFixed(1)}% |
+                    片段: ${(plan.segments||[]).length} 个 |
+                    点击查看详情
+                </div>
+            </div>`;
+        }).join('') || '<p class="text-muted">暂无记录</p>';
+    });
+
+    function showAnalysisDetail(idx) {
+        const a = historyAnalyses[idx];
+        if (!a) return;
+        document.getElementById('detail-panel').style.display = 'block';
+        document.getElementById('detail-content').textContent = JSON.stringify(a, null, 2);
+    }
+
+    function showPlanDetail(idx) {
+        const p = historyPlans[idx];
+        if (!p) return;
+        document.getElementById('detail-panel').style.display = 'block';
+        document.getElementById('detail-content').textContent = JSON.stringify(p.plan_json || p, null, 2);
+    }
+    </script>
+</body>
+</html>
