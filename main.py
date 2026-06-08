@@ -5,9 +5,11 @@ FastAPI 后端 — 短剧投流素材智能剪辑 Agent 系统
 import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-from fastapi import FastAPI
+import time
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
+from prometheus_client import make_asgi_app
 from pydantic import BaseModel
 from typing import Optional
 import os
@@ -16,12 +18,31 @@ from models import init_db, SessionLocal, HotRef, MaterialAnalysis, EditPlan
 from mock_data import seed_data
 from agent_workflow import run_workflow, run_workflow_with_interrupt, resume_workflow
 from vector_store import get_vector_store
+from metrics import http_requests, http_latency, feedback_total
 
 app = FastAPI(title="短剧智能剪辑 Agent 系统")
+
+# 挂载 /metrics 端点
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 # 挂载静态文件
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """采集 HTTP 请求指标"""
+    t0 = time.time()
+    response = await call_next(request)
+    duration = time.time() - t0
+    path = request.url.path
+    # 排除静态文件和 metrics 自身
+    if not path.startswith("/static") and not path.startswith("/metrics"):
+        http_requests.labels(request.method, path, str(response.status_code)).inc()
+        http_latency.labels(request.method, path).observe(duration)
+    return response
 
 
 # ========== 启动初始化 ==========
@@ -147,6 +168,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/api/feedback")
 def submit_feedback(req: FeedbackRequest):
     """数据飞轮：投流效果回传，调整知识库权重"""
+    feedback_total.inc()
     db = SessionLocal()
     plan = db.query(EditPlan).get(req.plan_id)
     if plan and plan.plan_json:

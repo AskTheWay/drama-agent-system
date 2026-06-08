@@ -11,6 +11,7 @@ import httpx
 from models import SessionLocal, HotRef
 from logger import get_logger
 from config import DASHSCOPE_API_KEY
+from metrics import embedding_calls, embedding_errors, vector_searches, faiss_index_size
 
 logger = get_logger(__name__)
 EMBEDDING_DIM = 1024
@@ -37,6 +38,7 @@ class VectorStore:
             "parameters": {"dimension": EMBEDDING_DIM},
         }
         try:
+            embedding_calls.inc()
             resp = httpx.post(
                 "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
                 headers=headers,
@@ -46,6 +48,7 @@ class VectorStore:
             resp.raise_for_status()
             return resp.json()["output"]["embeddings"][0]["embedding"]
         except Exception as e:
+            embedding_errors.inc()
             logger.warning(f"Embedding API 失败: {e}，使用随机向量")
             return list(np.random.rand(EMBEDDING_DIM).astype(float))
 
@@ -58,6 +61,7 @@ class VectorStore:
             self.index = faiss.read_index(index_file)
             with open(meta_file, "r", encoding="utf-8") as f:
                 self.metadata = json.load(f)
+            faiss_index_size.set(self.index.ntotal)
             logger.info(f"已加载 {self.index.ntotal} 条向量")
         else:
             self.build_index()
@@ -107,6 +111,7 @@ class VectorStore:
             json.dump(self.metadata, f, ensure_ascii=False)
 
         db.close()
+        faiss_index_size.set(len(vectors))
         logger.info(f"构建完成，{len(vectors)} 条向量已索引")
 
     def _filter_candidates(self, category: str = None, sub_category: str = None) -> list[int]:
@@ -148,6 +153,7 @@ class VectorStore:
         if self.index is None or self.index.ntotal == 0:
             return []
 
+        vector_searches.inc()
         candidates = self._filter_candidates(category, sub_category)
         query_vec = np.array([self._get_embedding(query)], dtype="float32")
         faiss.normalize_L2(query_vec)

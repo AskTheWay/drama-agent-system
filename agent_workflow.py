@@ -25,6 +25,10 @@ from models import (
 from vector_store import get_vector_store
 from video_processor import process_video, extract_frames, analyze_frames_batch
 from logger import get_logger, flow_logger
+from metrics import (
+    node_executions, node_latency, quality_score as quality_score_hist,
+    retry_total, llm_calls, llm_errors,
+)
 import config
 
 logger = get_logger(__name__)
@@ -157,6 +161,7 @@ ASR：{asr_text}
 def node_analyze(state: WorkflowState) -> WorkflowState:
     """节点1：原视频深度理解"""
     logger.info("[节点1] 原视频深度理解...")
+    node_executions.labels("analyze").inc()
     t0 = time.time()
     asr_text = state["asr_text"]
     filename = state["filename"]
@@ -170,12 +175,14 @@ def node_analyze(state: WorkflowState) -> WorkflowState:
     chain = ANALYSIS_PROMPT | llm | JsonOutputParser()
 
     try:
+        llm_calls.labels("analyze").inc()
         result = chain.invoke({
             "filename": filename,
             "asr_text": asr_text,
             "frame_descriptions": json.dumps(frame_descriptions, ensure_ascii=False),
         })
     except Exception as e:
+        llm_errors.labels("analyze").inc()
         logger.warning(f"[节点1] LLM 失败，使用模拟: {e}")
         result = _mock_analysis(asr_text)
 
@@ -196,6 +203,7 @@ def node_analyze(state: WorkflowState) -> WorkflowState:
     db.close()
 
     duration = (time.time() - t0) * 1000
+    node_latency.labels("analyze").observe(duration / 1000)
     steps = _record_step(state, "analyze", "原视频深度理解",
         {"filename": filename, "asr_text": asr_text[:100] + "...", "frame_count": len(frame_descriptions)},
         {"category": result.get("category"), "sub_category": result.get("sub_category"),
@@ -235,6 +243,7 @@ RETRIEVAL_PROMPT = ChatPromptTemplate.from_messages([
 def node_retrieve(state: WorkflowState) -> WorkflowState:
     """节点2：爆款策略检索（双模 RAG）"""
     logger.info("[节点2] 爆款策略检索...")
+    node_executions.labels("retrieve").inc()
     t0 = time.time()
     analysis = state["analysis"]
     category = analysis.get("category", "")
@@ -257,6 +266,7 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
         query = f"{query} 人工反馈：{human_feedback}"
 
     try:
+        llm_calls.labels("retrieve").inc()
         result = chain.invoke({
             "category": category, "sub_category": sub_category,
             "hook_text": hook_text,
@@ -264,11 +274,13 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
             "retrieved_refs": json.dumps(retrieved, ensure_ascii=False, indent=2),
         })
     except Exception as e:
+        llm_errors.labels("retrieve").inc()
         logger.warning(f"[节点2] LLM 失败，使用模拟: {e}")
         result = _mock_retrieval(retrieved)
 
     result["retrieved_refs"] = retrieved
     duration = (time.time() - t0) * 1000
+    node_latency.labels("retrieve").observe(duration / 1000)
     steps = _record_step(state, "retrieve", "爆款策略检索 (双模 RAG)",
         {"query": query, "category": category, "sub_category": sub_category},
         {"matched_count": len(retrieved),
@@ -287,6 +299,7 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
 def node_quality_check(state: WorkflowState) -> WorkflowState:
     """质量检查：评估分析和检索结果，决定是否需要回溯"""
     logger.info("[质量检查] 评估中...")
+    node_executions.labels("quality_check").inc()
     t0 = time.time()
     analysis = state["analysis"]
     strategy = state["strategy"]
@@ -327,7 +340,9 @@ def node_quality_check(state: WorkflowState) -> WorkflowState:
         issues.append("策略总结为空")
 
     score = max(0, min(100, score))
+    quality_score_hist.observe(score)
     duration = (time.time() - t0) * 1000
+    node_latency.labels("quality_check").observe(duration / 1000)
 
     route = "human_review" if score >= 70 or retry_count >= state.get("max_retries", 2) else "retrieve"
     steps = _record_step(state, "quality_check", "质量检查",
@@ -348,6 +363,7 @@ def route_after_quality(state: WorkflowState) -> Literal["retrieve", "human_revi
     max_retries = state.get("max_retries", 2)
 
     if score < 70 and retry_count < max_retries:
+        retry_total.inc()
         logger.warning(f"[路由] 质量不达标({score}<70)，回溯到检索节点，重试 {retry_count + 1}/{max_retries}")
         return "retrieve"
     else:
@@ -368,6 +384,7 @@ def node_retry_increment(state: WorkflowState) -> WorkflowState:
 def node_human_review(state: WorkflowState) -> WorkflowState:
     """人工审核：暂停工作流，等待人工反馈"""
     logger.info("[人工审核] 等待人工介入...")
+    node_executions.labels("human_review").inc()
     steps = _record_step(state, "human_review", "人工审核（暂停等待）",
         {"quality_score": state.get("quality_score"), "retry_count": state.get("retry_count")},
         {"action": "暂停，等待人工通过/打回"},
@@ -432,6 +449,7 @@ GENERATION_PROMPT = ChatPromptTemplate.from_messages([
 def node_generate(state: WorkflowState) -> WorkflowState:
     """节点3：剪辑方案生成（JSON Schema 强制输出）"""
     logger.info("[节点3] 剪辑方案生成...")
+    node_executions.labels("generate").inc()
     t0 = time.time()
     analysis = state.get("analysis", {})
     strategy = state.get("strategy", {})
@@ -453,6 +471,7 @@ def node_generate(state: WorkflowState) -> WorkflowState:
     chain = GENERATION_PROMPT | llm | JsonOutputParser()
 
     try:
+        llm_calls.labels("generate").inc()
         result = chain.invoke({
             "analysis": json.dumps({
                 "hook_analysis": analysis.get("hook_analysis"),
@@ -470,6 +489,7 @@ def node_generate(state: WorkflowState) -> WorkflowState:
             "feedback_hint": feedback_hint,
         })
     except Exception as e:
+        llm_errors.labels("generate").inc()
         logger.warning(f"[节点3] LLM 失败，使用模拟: {e}")
         result = _mock_plan(analysis, strategy)
 
@@ -489,6 +509,7 @@ def node_generate(state: WorkflowState) -> WorkflowState:
     db.close()
 
     duration = (time.time() - t0) * 1000
+    node_latency.labels("generate").observe(duration / 1000)
     steps = _record_step(state, "generate", "剪辑方案生成",
         {"category": analysis.get("category"), "sub_category": analysis.get("sub_category"),
          "strategy_summary": strategy.get("strategy_summary", "")[:50],
