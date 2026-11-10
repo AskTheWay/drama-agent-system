@@ -1,4 +1,127 @@
-# 短剧投流素材智能剪辑 Agent 系统 — 技术文档
+# 短剧投流素材智能剪辑 Agent 系统
+
+基于 **LangGraph** 的短剧投流素材智能剪辑方案生成系统：输入一条短剧素材（ASR 文本 + 抽帧画面），Agent 工作流自动完成「原视频深度理解 → 爆款策略检索（双模 RAG） → 质量检查与回溯 → 人工审核 → 剪辑方案生成」，输出结构化（JSON Schema）的高转化剪辑脚本，并通过投流效果回传持续校准知识库权重（数据飞轮）。
+
+## ✨ 核心特性
+
+- **Agent 工作流编排** — LangGraph StateGraph，6 节点 + 条件边路由，支持质量不达标**回溯重试**（quality_check < 70 分 → 重新检索）
+- **Human-in-the-Loop** — `analyze_interrupt` / `resume` 接口实现人工审核暂停/恢复，可一键打回重新检索
+- **双模 RAG 检索** — 元数据预过滤（赛道硬规则）+ FAISS 余弦相似度向量检索（软匹配）两层召回
+- **多模态视频理解** — OpenCV 抽帧 + Whisper ASR + Qwen-VL 帧级画面分析（场景/视觉钩子/情绪/构图）
+- **JSON Schema 结构化输出** — Pydantic Schema + JsonOutputParser 强约束 LLM 输出，剪辑片段精确到秒级时间轴、运镜、BGM 卡点
+- **数据飞轮** — 投流效果回传加权更新爆款素材 score，高分策略优先被召回
+- **全链路可观测** — 结构化日志 + Prometheus 指标 + Grafana 看板（请求量/延迟/反馈数）
+- **优雅降级** — 所有外部依赖（LLM/Embedding/MLLM/Whisper/OpenCV）均有 mock 兜底，零 Key 也能完整跑通
+
+## 📸 运行效果
+
+### Agent 工作流 — 素材输入
+
+预设 4 种题材模板（男频·逆袭 / 女频·复仇 / 男频·战神 / 女频·甜宠）一键填充，工作流 5 节点状态实时可视化：
+
+![工作流输入](docs/images/01-workflow-input.png)
+
+### 工作流运行中
+
+节点状态渐变推进，质量检查 < 70 分自动回溯重试：
+
+![工作流运行中](docs/images/02-workflow-running.png)
+
+### 运行结果 — 三节点完整输出
+
+**节点1** 原视频深度理解（钩子分析 / 赛道判断 / 情绪曲线 / 关键特征）→ **节点2** 爆款策略检索（相似度排序的素材卡片 + 策略总结）→ **节点3** 剪辑方案（秒级时间轴片段 / 运镜 / BGM 卡点 / 预估 CTR）：
+
+![工作流结果](docs/images/03-workflow-result.png)
+
+### 人工审核暂停（Human-in-the-Loop）
+
+开启人工介入模式后，工作流在审核节点暂停，展示质量评分与检索策略，支持**通过生成**或**打回重新检索**：
+
+![人工审核暂停](docs/images/04-human-review-paused.png)
+
+审核通过后继续执行至方案生成：
+
+![审核后结果](docs/images/05-workflow-after-review.png)
+
+### 爆款知识库
+
+6 条爆款素材知识卡片（钩子文案 / CTR / 3秒停留率 / 完播率 / 综合得分），支持语义搜索与赛道筛选：
+
+![爆款知识库](docs/images/06-knowledge-base.png)
+
+### 历史记录
+
+历史分析记录与剪辑方案，可展开查看完整 JSON：
+
+![历史记录](docs/images/07-history.png)
+
+### 系统架构
+
+技术架构总览页：
+
+![系统架构](docs/images/08-architecture.png)
+
+## 🚀 快速开始
+
+```bash
+cd drama_agent_system
+
+# 1. 安装核心依赖
+pip install langchain langchain-openai fastapi uvicorn faiss-cpu httpx sqlalchemy prometheus-client
+
+# 2.（可选）配置 API Key — 不配置也能跑，所有外部依赖有 mock 兜底
+cp .env.example .env
+# 编辑 .env 填入 LLM_API_KEY / DASHSCOPE_API_KEY
+
+# 3. 启动服务
+python -m uvicorn main:app --host 0.0.0.0 --port 8080
+
+# 4. 浏览器访问
+# http://localhost:8080
+```
+
+可选监控栈（Prometheus + Grafana）：
+
+```bash
+docker-compose up -d
+# Prometheus: http://localhost:9090
+# Grafana:    http://localhost:3000 (admin/admin)
+```
+
+重新生成 README 截图（需先启动服务）：
+
+```bash
+pip install playwright
+python scripts/take_screenshots.py   # 使用系统 Edge 内核，截图输出到 docs/images/
+```
+
+## 📁 项目结构
+
+```
+drama_agent_system/
+├── main.py                  # FastAPI 后端（API 路由 + 指标采集）
+├── agent_workflow.py        # LangGraph 工作流（6节点 + 回溯 + 人工审核）
+├── vector_store.py          # 双模 RAG 检索引擎（元数据预过滤 + FAISS）
+├── video_processor.py       # 多模态视频处理（抽帧 + ASR + MLLM）
+├── models.py                # SQLAlchemy 表结构 + Pydantic 输出 Schema
+├── mock_data.py             # 种子数据（6条爆款素材知识库）
+├── metrics.py               # Prometheus 指标定义
+├── logger.py                # 结构化日志
+├── config.py                # 配置（从 .env 读取 API Key）
+├── static/index.html        # 前端（Bootstrap 5，4 Tab 页）
+├── scripts/
+│   └── take_screenshots.py  # README 截图脚本（Playwright + Edge）
+├── docs/                    # 延伸技术文档 + 运行截图
+│   └── images/              # README 截图
+├── data/                    # 运行时数据（SQLite + FAISS 索引，gitignore）
+├── docker-compose.yml       # Prometheus + Grafana 监控栈
+├── prometheus.yml           # Prometheus 抓取配置
+├── grafana_dashboard.json   # Grafana 看板模板
+├── .env.example             # 环境变量模板
+└── README.md
+```
+
+---
 
 ## 一、系统概述
 
@@ -17,6 +140,7 @@
 | 阿里云 Embedding | 文本向量化 | Vector DB |
 | SQLite | 结构化数据存储 | PostgreSQL (demo 用 SQLite) |
 | FastAPI | 后端 API 服务 | — |
+| Prometheus + Grafana | 指标监控与可视化 | — |
 | JSON Mode / JsonOutputParser | 结构化输出控制 | JSON Mode / Function Calling |
 
 ---
@@ -258,7 +382,7 @@ class EditSegment(BaseModel):
     duration: str            # 时长
     scene_description: str   # 画面描述
     camera_movement: str     # 运镜方式
-    bgm_cue: str            # BGM 卡点说明
+    bgm_cue: str             # BGM 卡点说明
     text_overlay: str        # 字幕/文案
     transition: str          # 转场效果
     conversion_hook: str     # 转化引导话术
@@ -562,6 +686,7 @@ score = score * 0.8 + new_score * 0.2  (加权移动平均)
 | GET | `/api/plans` | 获取历史剪辑方案 |
 | POST | `/api/search?query=xxx&category=男频` | 语义向量检索爆款策略 |
 | POST | `/api/feedback` | 投流效果回传（数据飞轮） |
+| GET | `/metrics` | Prometheus 指标端点 |
 
 ---
 
@@ -575,6 +700,7 @@ score = score * 0.8 + new_score * 0.2  (加权移动平均)
 | faiss-cpu | 向量检索 | 是 | — |
 | httpx | API 调用 | 是 | — |
 | sqlalchemy | ORM | 是 | — |
+| prometheus-client | 指标采集 | 是 | — |
 | opencv-python | 帧抽取 | 否 | `_mock_frames()` |
 | openai-whisper | ASR 转写 | 否 | `_mock_asr()` |
 | 阿里云 Embedding API | 文本向量化 | 否 | 随机向量 |
@@ -583,24 +709,7 @@ score = score * 0.8 + new_score * 0.2  (加权移动平均)
 
 ---
 
-## 六、启动方式
-
-```bash
-cd d:\python_workspace\agents\drama_agent_system
-
-# 安装核心依赖
-pip install faiss-cpu fastapi uvicorn httpx sqlalchemy
-
-# 启动服务
-python -m uvicorn main:app --host 0.0.0.0 --port 8080
-
-# 访问
-http://localhost:8080
-```
-
----
-
-## 七、简历要点对照
+## 六、简历要点对照
 
 | 简历描述 | 系统实现 | 文件 |
 |---------|---------|------|
@@ -615,3 +724,17 @@ http://localhost:8080
 | 黄金3秒钩子提取 | hook_analysis 字段 | agent_workflow.py |
 | 情绪曲线 | emotion_curve 字段 | models.py |
 | 音画卡点规则 | beat_points 字段 | models.py |
+
+---
+
+## 📚 延伸文档（docs/）
+
+| 文档 | 内容 |
+|------|------|
+| [系统总结](docs/系统总结.md) | 系统全貌总结、设计取舍 |
+| [面试 QA](docs/INTERVIEW_QA.md) | 高频面试题与回答思路 |
+| [LangGraph 与 LangChain 详解](docs/LangGraph与LangChain详解.md) | 框架原理与对比 |
+| [FAISS 详解](docs/FAISS详解.md) | 向量检索原理、索引类型选型 |
+| [日志系统详解](docs/日志系统详解.md) | 结构化日志设计 |
+| [Prometheus + Grafana 完整指南](docs/Prometheus+Grafana完整指南.md) | 监控栈搭建与看板配置 |
+| [LangSmith 接入详解](docs/LangSmith接入详解.md) | LLM 链路可观测性 |
