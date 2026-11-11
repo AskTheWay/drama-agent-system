@@ -30,6 +30,7 @@ def get_logger(name: str) -> logging.Logger:
 # 数据流转专用 logger — 记录节点间完整数据，写入 flow.log
 flow_logger = logging.getLogger("flow")
 flow_logger.setLevel(logging.DEBUG)
+flow_logger.propagate = False  # 防止 DEBUG 级完整 state 冒泡到 root logger 重复输出
 _flow_handler = logging.FileHandler(
     os.path.join(LOG_DIR, "flow.log"), encoding="utf-8"
 )

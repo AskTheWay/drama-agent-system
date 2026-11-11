@@ -48,10 +48,15 @@ def extract_frames(video_path: str, interval_sec: float = 1.0, max_frames: int =
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / fps if fps > 0 else 0
+    # fps 元数据缺失时（损坏文件/部分流媒体）为 0：统一兜底为 1，
+    # 否则 frame_interval=0 死循环抽同一帧、timestamp 计算除零崩溃
+    if fps <= 0:
+        logger.warning(f"视频 fps 元数据缺失/非法（{fps}），按 1fps 兜底处理")
+        fps = 1.0
+    duration = total_frames / fps
 
     frames = []
-    frame_interval = int(fps * interval_sec)
+    frame_interval = max(1, int(fps * interval_sec))
     frame_idx = 0
     count = 0
 
@@ -114,11 +119,22 @@ def transcribe_audio(video_path: str) -> str:
         logger.warning(f"文件不存在: {video_path}，使用模拟转写")
         return _mock_asr()
 
-    model = whisper.load_model("base")
+    model = _get_whisper_model()
     result = model.transcribe(video_path, language="zh")
     text = result["text"]
     logger.info(f"ASR 转写完成，{len(text)} 字")
     return text
+
+
+_whisper_model = None
+
+
+def _get_whisper_model():
+    """Whisper 模型全局缓存——load_model 一次要数秒，不能每次转写都重新加载"""
+    global _whisper_model
+    if _whisper_model is None:
+        _whisper_model = whisper.load_model("base")
+    return _whisper_model
 
 
 def _mock_asr():

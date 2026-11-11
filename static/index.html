@@ -5,144 +5,322 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>短剧投流素材智能剪辑 Agent 系统</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
-        :root { --primary: #6366f1; --secondary: #8b5cf6; --accent: #ec4899; }
-        body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-        * { color: #e2e8f0; }
-        a, .nav-link { color: #a5b4fc !important; }
-        .nav-link.active { color: white !important; }
-        .navbar { background: linear-gradient(135deg, #1e1b4b, #312e81); }
-        .navbar * { color: white !important; }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; color: #e2e8f0; }
-        .card-header { background: linear-gradient(135deg, var(--primary), var(--secondary));
-                       color: white; font-weight: 600; border-radius: 12px 12px 0 0; }
-        .card-body { color: #cbd5e1; }
-        .form-control, .form-select { background: #0f172a; border: 1px solid #475569; color: #e2e8f0 !important; }
-        .form-control:focus, .form-select:focus { background: #0f172a; border-color: var(--primary); color: #e2e8f0 !important; box-shadow: 0 0 0 0.2rem rgba(99,102,241,0.25); }
-        .form-control::placeholder { color: #64748b; }
-        .form-select option { background: #0f172a; color: #e2e8f0; }
-        textarea.form-control { color: #e2e8f0 !important; }
-        .form-label { color: #94a3b8; }
-        .btn-primary { background: var(--primary); border: none; color: white !important; }
-        .btn-primary:hover { background: var(--secondary); color: white !important; }
-        .btn-outline-light { color: #cbd5e1 !important; border-color: #475569; }
-        .btn-outline-light:hover { background: #334155; color: white !important; }
-        .badge { color: white !important; }
-        .badge-男频 { background: #3b82f6; }
-        .badge-女频 { background: #ec4899; }
-        .badge.bg-dark { background: #334155 !important; color: #e2e8f0 !important; }
-        .badge.bg-secondary { background: #475569 !important; }
-        .badge.bg-info { color: white !important; }
-        .badge.bg-success { color: white !important; }
-        .badge.bg-warning { color: #1e293b !important; }
-        .step-card { position: relative; padding-left: 40px; }
-        .step-number { position: absolute; left: 0; top: 0; width: 32px; height: 32px;
-                       border-radius: 50%; background: var(--primary); color: white;
-                       display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .step-line { position: absolute; left: 15px; top: 36px; bottom: -20px;
-                     width: 2px; background: #334155; }
-        .emotion-bar { height: 60px; background: #0f172a; border-radius: 8px; position: relative; overflow: hidden; }
-        .emotion-fill { height: 100%; border-radius: 8px; transition: width 0.5s; }
-        .segment-block { background: #0f172a; border-left: 3px solid var(--primary);
-                         padding: 12px; margin: 8px 0; border-radius: 0 8px 8px 0; color: #cbd5e1; }
-        .beat-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-                    margin: 0 4px; }
-        .json-view { background: #0d1117; border-radius: 8px; padding: 16px;
-                     font-family: 'Fira Code', monospace; font-size: 13px;
-                     max-height: 500px; overflow-y: auto; color: #7ee787; }
+        /* ============================================================
+           配色体系（dataviz 参考调色板，深色模式，validator 验证通过）
+           表面: page #0d0d0d / card #1a1a19 / 嵌套 #242422 / 深块 #141413
+           文字: #ffffff 17.4:1 / #c3c2b7 9.7:1 / 辅助 #a3a29b 6.8:1
+           强调: 蓝 #3987e5（替代原紫色）/ 链接亮蓝 #6da7ec 7.0:1
+           状态: good #0ca30c / warning #fab219 / critical #d03b3b
+           ============================================================ */
+        :root {
+            --bg: #0d0d0d;
+            --surface: #1a1a19;
+            --surface-2: #242422;
+            --surface-deep: #141413;
+            --text: #ffffff;
+            --text-2: #c3c2b7;
+            --text-muted: #a3a29b;
+            --hairline: rgba(255, 255, 255, 0.10);
+            --hairline-strong: rgba(255, 255, 255, 0.16);
+            --accent: #3987e5;
+            --accent-bright: #6da7ec;
+            --good: #0ca30c;
+            --warning: #fab219;
+            --critical: #d03b3b;
+        }
+        body {
+            background: var(--bg);
+            min-height: 100vh;
+            color: #e2e1d9;
+            font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+        }
+        a, .nav-link { color: var(--accent-bright) !important; }
+        .nav-link { color: var(--text-muted) !important; }
+        .nav-link.active { color: var(--text) !important; }
+        .navbar {
+            background: rgba(13, 13, 13, 0.88);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--hairline);
+        }
+        .navbar-brand { font-weight: 700; color: var(--text) !important; letter-spacing: 0.2px; }
+        h1, h2, h3, h4, h5, h6 { color: var(--text); font-weight: 600; }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--hairline);
+            border-radius: 12px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid var(--hairline);
+            font-weight: 600;
+            color: var(--text);
+        }
+        strong { color: var(--text); font-weight: 600; }
+        .text-primary { color: #6da7ec !important; }
+        /* 关键修复：覆盖 Bootstrap .text-muted（默认 #6c757d 在深底仅 3.7:1） */
+        .text-muted { color: var(--text-muted) !important; }
+        .form-label { color: var(--text-2); font-weight: 500; }
+        .form-control, .form-select {
+            background: var(--surface-2);
+            border-color: var(--hairline-strong);
+            color: var(--text);
+        }
+        .form-control::placeholder { color: #8a8981; }
+        .form-control:focus, .form-select:focus {
+            background: var(--surface-2);
+            color: var(--text);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(57, 135, 229, 0.22);
+        }
+        .form-check-input { background-color: var(--surface-2); border-color: var(--hairline-strong); }
+        .form-check-input:checked { background-color: var(--accent); border-color: var(--accent); }
+        .form-check-label { color: var(--text-2); }
+        .btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            font-weight: 600;
+        }
+        .btn-primary:hover:not(:disabled), .btn-primary:focus:not(:disabled) {
+            background: #2a78d6;
+            border-color: #2a78d6;
+        }
+        .btn-outline-light {
+            color: var(--text-2);
+            border-color: var(--hairline-strong);
+        }
+        .btn-outline-light:hover { color: var(--text); background: var(--surface-2); }
+        .nav-tabs { border-bottom: 1px solid var(--hairline); }
+        .nav-tabs .nav-link { border-color: transparent; }
+        .nav-tabs .nav-link.active {
+            background: var(--surface);
+            border-color: var(--hairline) var(--hairline) var(--surface);
+            color: var(--text) !important;
+        }
+        .badge { font-weight: 500; }
+
+        /* ===== 统一 chip 体系（tint 底 + 亮色字，对比度全部 >= 5.5:1） ===== */
+        .chip {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-size: 12px; font-weight: 500; line-height: 1.5;
+            padding: 2px 9px; border-radius: 999px;
+            border: 1px solid var(--hairline-strong);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-2);
+            white-space: nowrap;
+        }
+        .chip-neutral { background: rgba(163, 162, 155, 0.10); }
+        .chip-blue    { background: rgba(57, 135, 229, 0.15); border-color: rgba(57, 135, 229, 0.40); color: #6da7ec; }
+        .chip-male    { background: rgba(57, 135, 229, 0.15); border-color: rgba(57, 135, 229, 0.40); color: #6da7ec; }
+        .chip-female  { background: rgba(213, 81, 129, 0.15); border-color: rgba(213, 81, 129, 0.40); color: #ef8bab; }
+        .chip-success { background: rgba(12, 163, 12, 0.13); border-color: rgba(12, 163, 12, 0.40); color: #4fc36a; }
+        .chip-warn    { background: rgba(250, 178, 25, 0.12); border-color: rgba(250, 178, 25, 0.40); color: #e8b04a; }
+        .chip-cyan    { background: rgba(25, 158, 112, 0.13); border-color: rgba(25, 158, 112, 0.40); color: #3ecf95; }
+
+        /* 卡片内的指标网格（stat tile 风格：label 灰小字 / value 白粗体） */
+        .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+        .metric-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+        .metric .metric-label { font-size: 11px; color: var(--text-muted); }
+        .metric .metric-value { font-size: 14.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+
+        /* 卡点：色点 + 文字（去实底色块） */
+        .beat-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); margin: 0 12px 6px 0; }
+        .beat-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+
+        /* ===== 工作流节点可视化 ===== */
+        .workflow-viz {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow-x: auto;
+            padding: 8px 2px;
+        }
+        .workflow-node {
+            flex: 0 0 auto;
+            min-width: 118px;
+            text-align: center;
+            padding: 12px 10px;
+            border-radius: 10px;
+            background: var(--surface-2);
+            border: 1.5px solid var(--hairline-strong);
+            color: var(--text);
+            transition: all .35s ease;
+        }
+        .workflow-node small { color: #b8b7ae !important; }
+        .workflow-node.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(57, 135, 229, 0.25);
+            transform: translateY(-2px);
+        }
+        .workflow-node.done {
+            border-color: rgba(12, 163, 12, 0.55);
+            background: rgba(12, 163, 12, 0.10);
+        }
+        .workflow-node.done strong { color: #4fc36a; }
+        .workflow-arrow { flex: 0 0 auto; color: #78766f; font-size: 18px; }
+
+        /* ===== 回溯横幅（warning 语义） ===== */
+        .retry-banner {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: rgba(250, 178, 25, 0.10);
+            border: 1px solid rgba(250, 178, 25, 0.45);
+            color: var(--warning);
+            font-size: 0.92rem;
+        }
+        .retry-banner.show { display: flex; }
+
+        /* ===== 情绪曲线图表 ===== */
+        .emotion-chart-box { background: var(--surface-deep); border: 1px solid var(--hairline); border-radius: 10px; padding: 10px 6px 4px; }
+        .emotion-chart-box svg { width: 100%; height: auto; display: block; }
+
+        /* ===== 执行步骤 ===== */
+        .step-item {
+            border-left: 3px solid var(--accent);
+            padding: 8px 12px;
+            margin: 8px 0;
+            background: var(--surface-deep);
+            border-radius: 0 8px 8px 0;
+        }
+        .step-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .step-badge {
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--hairline);
+            border-left: 3px solid var(--chip-accent, #78766f);
+            color: var(--chip-accent, #c3c2b7);
+        }
+        .step-time { color: var(--text-muted); font-size: 12px; }
+        .step-io { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+        @media (max-width: 768px) { .step-io { grid-template-columns: 1fr; } }
+        .step-io-block { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; padding: 8px; overflow-wrap: anywhere; }
+        .step-io-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; letter-spacing: 1px; }
+        .step-io-content { font-size: 13px; line-height: 1.7; color: var(--text-2); }
+        .step-arrow { text-align: center; color: #78766f; }
+        .llm-mode-badge { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+        .llm-real { background: rgba(12, 163, 12, 0.14); color: #4fc36a; border: 1px solid rgba(12, 163, 12, 0.45); }
+        .llm-mock { background: rgba(163, 162, 155, 0.14); color: var(--text-muted); border: 1px solid var(--hairline-strong); }
+
         .loading { display: none; }
         .loading.active { display: flex; }
-        .ref-card:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(99,102,241,0.3);
-                          transition: all 0.3s; }
-        .stats-num { font-size: 2rem; font-weight: 700; color: var(--primary); }
-        .text-muted { color: #64748b !important; }
-        .text-warning { color: #fbbf24 !important; }
-        .text-primary { color: var(--primary) !important; }
-        .tab-content { padding-top: 20px; }
-        .nav-tabs { border-bottom-color: #334155; }
-        .nav-tabs .nav-link { border-color: transparent; }
-        .nav-tabs .nav-link.active { background: #1e293b; border-color: #334155 #334155 #1e293b; }
-        .workflow-viz { display: flex; align-items: center; justify-content: center; gap: 20px;
-                        padding: 20px; flex-wrap: wrap; }
-        .workflow-node { background: #0f172a; border: 2px solid #334155; border-radius: 12px;
-                         padding: 16px 24px; text-align: center; min-width: 160px; transition: all 0.3s; color: #e2e8f0; }
-        .workflow-node.active { border-color: var(--primary); box-shadow: 0 0 20px rgba(99,102,241,0.4); }
-        .workflow-node.done { border-color: #10b981; }
-        .workflow-arrow { font-size: 24px; color: #475569; }
-        .spinner-border { color: var(--primary) !important; }
-        .step-item { border-left: 3px solid #334155; padding: 12px 16px; margin-bottom: 8px; position: relative; }
-        .step-item:last-child { border-left-color: var(--primary); }
-        .step-item .step-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-        .step-item .step-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
-        .step-item .step-time { color: #64748b; font-size: 12px; }
-        .step-item .step-io { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
-        .step-item .step-io-block { background: #0f172a; border-radius: 6px; padding: 8px 12px; }
-        .step-item .step-io-label { color: #64748b; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
-        .step-item .step-io-content { color: #cbd5e1; word-break: break-all; }
-        .step-arrow { text-align: center; color: #475569; font-size: 18px; margin: -4px 0; }
-        h6 { color: #94a3b8; }
-        strong { color: #f1f5f9; }
-        small { color: #94a3b8; }
+        .segment-block {
+            background: var(--surface-2);
+            border: 1px solid var(--hairline);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .json-view {
+            background: var(--surface-deep);
+            border: 1px solid var(--hairline);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 12.5px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: #9ccf9e;
+            max-height: 420px;
+            overflow-y: auto;
+        }
+        .ref-card { transition: transform .15s ease, border-color .15s ease; height: 100%; }
+        .ref-card:hover { transform: translateY(-3px); border-color: var(--hairline-strong); }
+        .stat-card { text-align: center; padding: 14px 8px; }
+        .stat-card .fs-2 { color: var(--text); font-weight: 700; }
+        .stat-card small { color: var(--text-muted) !important; }
+
+        /* ===== 术语 tooltip ===== */
+        .tip {
+            border-bottom: 1px dotted #78766f;
+            cursor: help;
+            position: relative;
+        }
+        .tip::after {
+            content: attr(data-tip);
+            position: absolute;
+            left: 50%;
+            bottom: calc(100% + 8px);
+            transform: translateX(-50%);
+            background: var(--surface-2);
+            border: 1px solid var(--hairline-strong);
+            color: var(--text-2);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 400;
+            width: 260px;
+            white-space: normal;
+            line-height: 1.6;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .2s;
+            z-index: 50;
+            text-align: left;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+        .tip:hover::after { opacity: 1; }
+
+        /* ===== Toast 通知 ===== */
+        .toast-box {
+            position: fixed;
+            top: 70px;
+            right: 18px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 360px;
+        }
+        .toast-item {
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            animation: slideIn .25s ease;
+        }
+        @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+        .toast-err { background: #2a1414; border: 1px solid var(--critical); color: #f1a9a9; }
+        .toast-ok { background: #12240f; border: 1px solid var(--good); color: #a8e0ab; }
+
+        .segment-block .small, .card-body .small { font-size: 13.5px; }
+        .feedback-row { display: flex; gap: 6px; margin-top: 8px; }
+        .feedback-row input { width: 90px; }
     </style>
 </head>
 <body>
+    <!-- Toast 容器 -->
+    <div class="toast-box" id="toast-box"></div>
+
     <!-- 导航栏 -->
-    <nav class="navbar navbar-dark">
+    <nav class="navbar navbar-expand-lg sticky-top">
         <div class="container-fluid">
-            <span class="navbar-brand">
-                <i class="bi bi-film"></i> 短剧投流素材智能剪辑 Agent 系统
-            </span>
-            <span class="text-light opacity-75">LangGraph + RAG + Human-in-the-Loop</span>
+            <a class="navbar-brand" href="#"><i class="bi bi-film"></i> 短剧智能剪辑 Agent 系统</a>
+            <ul class="nav nav-tabs border-0" id="mainTabs">
+                <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-workflow"><i class="bi bi-diagram-3"></i> Agent 工作流</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-knowledge"><i class="bi bi-collection"></i> 爆款知识库</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history"><i class="bi bi-clock-history"></i> 历史记录</button></li>
+                <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-architecture"><i class="bi bi-cpu"></i> 系统架构</button></li>
+            </ul>
         </div>
     </nav>
 
-    <div class="container-fluid mt-3">
-        <!-- 顶部统计 -->
-        <div class="row mb-3">
-            <div class="col-md-3"><div class="card text-center p-3">
-                <div class="stats-num" id="stat-refs">0</div>
-                <small class="text-muted">爆款素材库</small>
-            </div></div>
-            <div class="col-md-3"><div class="card text-center p-3">
-                <div class="stats-num" id="stat-analyses">0</div>
-                <small class="text-muted">已分析素材</small>
-            </div></div>
-            <div class="col-md-3"><div class="card text-center p-3">
-                <div class="stats-num" id="stat-plans">0</div>
-                <small class="text-muted">生成方案</small>
-            </div></div>
-            <div class="col-md-3"><div class="card text-center p-3">
-                <div class="stats-num" id="stat-avg-score">0</div>
-                <small class="text-muted">平均质量分</small>
-            </div></div>
+    <div class="container-fluid py-4">
+        <!-- 统计卡 -->
+        <div class="row mb-4" id="stats-row">
+            <div class="col-6 col-md-3"><div class="card stat-card"><div class="fs-2" id="stat-refs">-</div><small>爆款素材库</small></div></div>
+            <div class="col-6 col-md-3"><div class="card stat-card"><div class="fs-2" id="stat-analyses">-</div><small>累计分析</small></div></div>
+            <div class="col-6 col-md-3"><div class="card stat-card"><div class="fs-2" id="stat-plans">-</div><small>剪辑方案</small></div></div>
+            <div class="col-6 col-md-3"><div class="card stat-card"><div class="fs-2" id="stat-avg-score">-</div><small>方案平均分</small></div></div>
         </div>
 
-        <!-- 主标签页 -->
-        <ul class="nav nav-tabs" id="mainTabs">
-            <li class="nav-item">
-                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-workflow">
-                    <i class="bi bi-diagram-3"></i> Agent 工作流
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-knowledge">
-                    <i class="bi bi-database"></i> 爆款知识库
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history">
-                    <i class="bi bi-clock-history"></i> 历史记录
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-architecture">
-                    <i class="bi bi-cpu"></i> 系统架构
-                </button>
-            </li>
-        </ul>
-
-        <div class="tab-content" id="tabContent">
+        <div class="tab-content">
             <!-- Tab 1: Agent 工作流 -->
             <div class="tab-pane fade show active" id="tab-workflow">
                 <div class="row">
@@ -176,13 +354,16 @@
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="mode-human-review">
                                         <label class="form-check-label" for="mode-human-review">
-                                            人工介入模式（暂停在审核节点）
+                                            <span class="tip" data-tip="Human-in-the-Loop：开启后工作流会在人工审核节点暂停，等待你「通过」或「打回」再继续——对应 API：POST /api/analyze_interrupt + /api/resume">人工介入模式（暂停在审核节点）</span>
                                         </label>
                                     </div>
                                 </div>
                                 <button class="btn btn-primary w-100" id="btn-analyze" onclick="runWorkflow()">
                                     <i class="bi bi-play-circle"></i> 启动 Agent 工作流
                                 </button>
+                                <div class="mt-3 small text-muted">
+                                    <i class="bi bi-info-circle"></i> 未配置 LLM API Key 时，各节点自动使用内置演示数据（结果中会标注「兜底数据」），系统可完整跑通。
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -191,7 +372,10 @@
                     <div class="col-md-8">
                         <!-- 工作流可视化 -->
                         <div class="card mb-3">
-                            <div class="card-header"><i class="bi bi-diagram-3"></i> Agent 工作流状态</div>
+                            <div class="card-header">
+                                <i class="bi bi-diagram-3"></i> Agent 工作流状态
+                                <span class="tip ms-2" data-tip="质量检查评分 &lt; 70 时回溯到「策略检索」节点重新执行（最多 2 次），这是 LangGraph 条件边实现的回溯重试机制"><i class="bi bi-question-circle"></i> 回溯机制说明</span>
+                            </div>
                             <div class="card-body">
                                 <div class="workflow-viz">
                                     <div class="workflow-node" id="node-1">
@@ -203,7 +387,7 @@
                                     <div class="workflow-node" id="node-2">
                                         <i class="bi bi-search" style="font-size:24px"></i><br>
                                         <strong>策略检索</strong><br>
-                                        <small class="text-muted">双模 RAG</small>
+                                        <small class="text-muted"><span class="tip" data-tip="Retrieval-Augmented Generation：先按赛道过滤（元数据预过滤），再用 FAISS 向量相似度做语义匹配（软匹配）">双模 RAG</span></small>
                                     </div>
                                     <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
                                     <div class="workflow-node" id="node-qc">
@@ -215,14 +399,18 @@
                                     <div class="workflow-node" id="node-hr">
                                         <i class="bi bi-person-check" style="font-size:24px"></i><br>
                                         <strong>人工审核</strong><br>
-                                        <small class="text-muted">可暂停</small>
+                                        <small class="text-muted">介入模式暂停</small>
                                     </div>
                                     <div class="workflow-arrow"><i class="bi bi-arrow-right"></i></div>
                                     <div class="workflow-node" id="node-3">
                                         <i class="bi bi-filetype-json" style="font-size:24px"></i><br>
                                         <strong>方案生成</strong><br>
-                                        <small class="text-muted">JSON Schema</small>
+                                        <small class="text-muted">JSON Schema 校验</small>
                                     </div>
+                                </div>
+                                <div class="retry-banner mt-2" id="retry-banner">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                    <span id="retry-banner-text"></span>
                                 </div>
                             </div>
                         </div>
@@ -237,7 +425,8 @@
                         <div class="card mb-3" id="steps-panel" style="display:none">
                             <div class="card-header">
                                 <i class="bi bi-list-check"></i> 执行步骤详情
-                                <span class="badge bg-secondary float-end" id="steps-count">0 步</span>
+                                <span class="text-muted small ms-2">（每步的输入摘要 / 输出摘要 / 数据来源）</span>
+                                <span class="chip chip-neutral float-end" id="steps-count">0 步</span>
                             </div>
                             <div class="card-body" id="steps-list"></div>
                         </div>
@@ -246,9 +435,9 @@
                         <div id="result-area" style="display:none">
                             <!-- 节点1结果：素材分析 -->
                             <div class="card mb-3">
-                                <div class="card-header">
-                                    <i class="bi bi-eye"></i> 节点1：原视频深度理解
-                                    <span class="badge bg-success float-end" id="analysis-badge">完成</span>
+                                <div class="card-header d-flex justify-content-between">
+                                    <span><i class="bi bi-eye"></i> 节点1：原视频深度理解</span>
+                                    <small class="text-muted align-self-center">POST /api/analyze</small>
                                 </div>
                                 <div class="card-body">
                                     <div class="row">
@@ -262,7 +451,7 @@
                                         </div>
                                     </div>
                                     <h6 class="mt-3">情绪曲线</h6>
-                                    <div class="d-flex gap-2 flex-wrap" id="emotion-curve"></div>
+                                    <div class="emotion-chart-box" id="emotion-curve"></div>
                                     <h6 class="mt-3">关键特征</h6>
                                     <div id="key-features"></div>
                                 </div>
@@ -270,13 +459,13 @@
 
                             <!-- 节点2结果：策略检索 -->
                             <div class="card mb-3">
-                                <div class="card-header">
-                                    <i class="bi bi-search"></i> 节点2：爆款策略检索 (RAG)
-                                    <span class="badge bg-success float-end" id="strategy-badge">完成</span>
+                                <div class="card-header d-flex justify-content-between">
+                                    <span><i class="bi bi-search"></i> 节点2：爆款策略检索 (RAG)</span>
+                                    <small class="text-muted align-self-center">VectorStore.search</small>
                                 </div>
                                 <div class="card-body">
-                                    <div id="retrieved-refs"></div>
-                                    <div class="mt-3" id="strategy-summary"></div>
+                                    <div class="row" id="retrieved-refs"></div>
+                                    <div id="strategy-summary"></div>
                                 </div>
                             </div>
 
@@ -287,7 +476,6 @@
                                     <span class="badge bg-warning text-dark float-end">等待审核</span>
                                 </div>
                                 <div class="card-body">
-                                    <!-- 审核信息 -->
                                     <div class="row mb-3">
                                         <div class="col-md-4">
                                             <h6>质量评分</h6>
@@ -302,19 +490,13 @@
                                             <div id="review-category">-</div>
                                         </div>
                                     </div>
-
-                                    <!-- 钩子分析 -->
                                     <h6>钩子分析</h6>
                                     <div class="segment-block mb-3" id="review-hook">-</div>
-
-                                    <!-- 策略总结 -->
                                     <h6>匹配策略</h6>
                                     <div class="segment-block mb-3" id="review-strategy">-</div>
-
-                                    <!-- 审核操作 -->
                                     <hr style="border-color: #475569;">
                                     <div class="mb-3">
-                                        <label class="form-label">审核意见（打回时填写改进要求）</label>
+                                        <label class="form-label">审核意见（打回时填写改进要求，会参与重新检索）</label>
                                         <textarea class="form-control" id="review-feedback" rows="3"
                                                   placeholder="例如：钩子不够吸引人，需要更强烈的冲突感..."></textarea>
                                     </div>
@@ -330,37 +512,36 @@
                             </div>
 
                             <!-- 节点3结果：剪辑方案 -->
-                            <div class="card mb-3">
-                                <div class="card-header">
-                                    <i class="bi bi-filetype-json"></i> 节点3：剪辑方案 (JSON Schema)
-                                    <span class="badge bg-success float-end" id="plan-badge">完成</span>
+                            <div class="card mb-3" id="plan-card" style="display:none">
+                                <div class="card-header d-flex justify-content-between">
+                                    <span><i class="bi bi-filetype-json"></i> 节点3：剪辑方案</span>
+                                    <span class="badge float-end" id="plan-schema-badge" style="display:none"></span>
                                 </div>
                                 <div class="card-body">
-                                    <!-- 片段时间线 -->
                                     <h6>剪辑片段</h6>
                                     <div id="segments-timeline"></div>
-
-                                    <!-- 音画卡点 -->
                                     <h6 class="mt-3">音画卡点</h6>
                                     <div id="beat-points"></div>
-
-                                    <!-- 预估指标 -->
+                                    <h6 class="mt-3">方案情绪曲线</h6>
+                                    <div class="emotion-chart-box" id="plan-emotion-curve"></div>
                                     <div class="row mt-3">
-                                        <div class="col-md-4"><div class="segment-block text-center">
+                                        <div class="col-md-3 col-6"><div class="segment-block text-center">
                                             <small class="text-muted">预估 CTR</small>
                                             <div class="fs-4 fw-bold text-primary" id="est-ctr">-</div>
                                         </div></div>
-                                        <div class="col-md-4"><div class="segment-block text-center">
+                                        <div class="col-md-3 col-6"><div class="segment-block text-center">
                                             <small class="text-muted">预估 3秒停留率</small>
                                             <div class="fs-4 fw-bold text-primary" id="est-retention">-</div>
                                         </div></div>
-                                        <div class="col-md-4"><div class="segment-block text-center">
-                                            <small class="text-muted">方案质量分</small>
+                                        <div class="col-md-3 col-6"><div class="segment-block text-center">
+                                            <small class="text-muted">质量检查评分</small>
                                             <div class="fs-4 fw-bold text-primary" id="quality-score">-</div>
                                         </div></div>
+                                        <div class="col-md-3 col-6"><div class="segment-block text-center">
+                                            <small class="text-muted">方案质量分</small>
+                                            <div class="fs-4 fw-bold text-primary" id="plan-score">-</div>
+                                        </div></div>
                                     </div>
-
-                                    <!-- JSON 原文 -->
                                     <div class="mt-3">
                                         <button class="btn btn-sm btn-outline-light" onclick="toggleJson()">
                                             <i class="bi bi-code-slash"></i> 查看完整 JSON
@@ -376,18 +557,24 @@
 
             <!-- Tab 2: 爆款知识库 -->
             <div class="tab-pane fade" id="tab-knowledge">
-                <div class="row mb-3">
-                    <div class="col-md-4">
+                <div class="row mb-3 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label small text-muted">语义搜索（FAISS 向量相似度，POST /api/search）</label>
                         <div class="input-group">
                             <input type="text" class="form-control" id="search-input"
-                                   placeholder="语义搜索爆款策略...">
-                            <button class="btn btn-primary" onclick="searchRefs()">
+                                   placeholder="输入钩子/题材描述，如：赘婿翻盘 电话响起..."
+                                   onkeydown="if(event.key==='Enter')searchRefs()">
+                            <button class="btn btn-primary" onclick="searchRefs()" title="搜索">
                                 <i class="bi bi-search"></i>
+                            </button>
+                            <button class="btn btn-outline-light" onclick="clearSearch()" title="清除搜索，回到全量列表">
+                                <i class="bi bi-x-circle"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="col-md-2">
-                        <select class="form-select" id="filter-category" onchange="loadRefs()">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">赛道筛选（搜索时同样生效）</label>
+                        <select class="form-select" id="filter-category" onchange="onFilterChange()">
                             <option value="">全部赛道</option>
                             <option value="男频">男频</option>
                             <option value="女频">女频</option>
@@ -408,10 +595,12 @@
                     </div>
                     <div class="col-md-6">
                         <div class="card">
-                            <div class="card-header"><i class="bi bi-file-earmark-json"></i> 剪辑方案（点击查看详情）</div>
+                            <div class="card-header">
+                                <i class="bi bi-file-earmark-json"></i> 剪辑方案（点击查看详情）
+                                <span class="tip ms-2" data-tip="数据飞轮：填写该方案投流后的真实效果得分（0-100）回传，对应素材的权重会按 加权移动平均 更新（POST /api/feedback），下次检索排序即用新分数"><i class="bi bi-question-circle"></i> 效果回传</span>
+                            </div>
                             <div class="card-body" id="history-plans"></div>
                         </div>
-                        <!-- 详情弹窗 -->
                         <div class="card mt-3" id="detail-panel" style="display:none">
                             <div class="card-header"><i class="bi bi-eye"></i> 详情 <button class="btn btn-sm btn-outline-light float-end" onclick="document.getElementById('detail-panel').style.display='none'">关闭</button></div>
                             <div class="card-body json-view" id="detail-content" style="max-height:600px"></div>
@@ -432,8 +621,9 @@
 │                                                                      │
 │  ┌──────────┐    ┌───────────────────────────────────────────────┐  │
 │  │  前端页面  │───→│              FastAPI 后端                     │  │
-│  │ HTML/JS  │←───│  /api/analyze | /api/analyze_interrupt | /resume│ │
-│  └──────────┘    └────────────────────┬──────────────────────────┘  │
+│  │ HTML/JS  │←───│ /api/analyze | /api/analyze_interrupt          │  │
+│  └──────────┘    │ /api/resume  | /api/search | /api/feedback    │  │
+│                  └────────────────────┬──────────────────────────┘  │
 │                                       │                              │
 │                    ┌──────────────────▼──────────────────┐          │
 │                    │     LangGraph StateGraph            │          │
@@ -457,15 +647,15 @@
 │                    │  ┌──────────────┐  ┌──────────┐   │          │
 │                    │  │ human_review │  │ 回溯重试  │   │          │
 │                    │  │  人工介入点   │  │retry+1   │───┘          │
-│                    │  │ (可暂停等待) │  └──────────┘              │
+│                    │  │ (介入模式暂停)│  └──────────┘              │
 │                    │  └──────┬───────┘                             │
 │                    │         │ 通过/打回                            │
 │                    │         ▼                                     │
 │                    │  ┌──────────┐                                 │
 │                    │  │ generate │ 节点3: 方案生成                   │
-│                    │  │ JSON Mode│ Schema 强制输出                  │
+│                    │  │Schema校验│ EditPlanSchema 结构化输出        │
 │                    │  └──────────┘                                 │
-│                    └───────────────────────────────────────┘       │
+│                    └───────────────────────────────────────────────┘          │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  数据层: SQLite + FAISS 向量索引 + 阿里云 Embedding API        │  │
@@ -475,8 +665,9 @@
 │  │  数据飞轮: 投流效果回传 → score 加权更新 → 知识库自优化        │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  技术栈: LangGraph · LangChain · mllm · ASR · RAG · FAISS          │
-│          JSON Mode · FastAPI · Human-in-the-Loop · Backtracking     │
+│  技术栈: LangGraph · LangChain · LLM(OpenAI兼容) · RAG · FAISS      │
+│          ASR(Whisper) · MLLM(Qwen-VL) · FastAPI · Prometheus        │
+│          Human-in-the-Loop · 回溯重试 · JSON Schema 结构化输出       │
 └──────────────────────────────────────────────────────────────────────┘
                         </pre>
                     </div>
@@ -487,6 +678,43 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+    // ========== 工具函数 ==========
+
+    // HTML 转义：所有后端/用户文本经 innerHTML 注入前必须过这里
+    function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    // Toast 通知（替代 alert）
+    function showToast(msg, type = 'err') {
+        const box = document.getElementById('toast-box');
+        const el = document.createElement('div');
+        el.className = `toast-item ${type === 'ok' ? 'toast-ok' : 'toast-err'}`;
+        el.textContent = msg;
+        box.appendChild(el);
+        setTimeout(() => el.remove(), 5000);
+    }
+
+    // 统一 fetch 封装：网络错误 / 非 2xx 状态 / JSON 解析全覆盖
+    async function apiFetch(url, options = {}) {
+        let resp;
+        try {
+            resp = await fetch(url, options);
+        } catch (e) {
+            showToast(`网络错误: ${e.message}（后端服务是否已启动？）`);
+            throw e;
+        }
+        if (!resp.ok) {
+            let detail = `HTTP ${resp.status}`;
+            try { const err = await resp.json(); if (err.detail) detail = err.detail; } catch (_) {}
+            showToast(`请求失败: ${detail}`);
+            throw new Error(detail);
+        }
+        return resp.json();
+    }
+
     // ========== 模板数据 ==========
     const TEMPLATES = {
         '逆袭': {
@@ -518,81 +746,115 @@
         }
     });
 
-    // ========== 统计数据 ==========
+    // ========== 统计数据（/api/stats 返回真实总数，不受列表 limit=20 截断） ==========
     async function loadStats() {
-        const refs = await fetch('/api/references').then(r => r.json());
-        const analyses = await fetch('/api/analyses').then(r => r.json());
-        const plans = await fetch('/api/plans').then(r => r.json());
-
-        document.getElementById('stat-refs').textContent = refs.length;
-        document.getElementById('stat-analyses').textContent = analyses.length;
-        document.getElementById('stat-plans').textContent = plans.length;
-
-        if (plans.length > 0) {
-            const avg = plans.reduce((s, p) => s + (p.quality_score || 0), 0) / plans.length;
-            document.getElementById('stat-avg-score').textContent = avg.toFixed(1);
-        }
+        try {
+            const s = await apiFetch('/api/stats');
+            document.getElementById('stat-refs').textContent = s.references;
+            document.getElementById('stat-analyses').textContent = s.analyses;
+            document.getElementById('stat-plans').textContent = s.plans;
+            document.getElementById('stat-avg-score').textContent = s.avg_quality_score;
+        } catch (_) { /* apiFetch 已弹 toast */ }
     }
 
     // ========== 全局状态 ==========
-    let pausedState = null;  // 暂停时保存的工作流状态
+    let pausedState = null;      // 暂停时保存的工作流状态
+    let nodeTimers = [];         // 运行中动画定时器（失败/重置时统一清理）
+
+    function clearNodeTimers() { nodeTimers.forEach(clearTimeout); nodeTimers = []; }
+
+    function setNodeState(id, state) {
+        const el = document.getElementById(id);
+        el.classList.remove('active', 'done');
+        if (state) el.classList.add(state);
+    }
+
+    function resetNodes() {
+        ['node-1', 'node-2', 'node-qc', 'node-hr', 'node-3'].forEach(id => setNodeState(id, null));
+        document.getElementById('retry-banner').classList.remove('show');
+    }
+
+    // 按真实执行步骤恢复节点终态（含回溯时多次执行的节点）
+    function markNodesFromSteps(steps) {
+        const seen = new Set(steps.map(s => s.node));
+        if (seen.has('analyze')) setNodeState('node-1', 'done');
+        if (seen.has('retrieve')) setNodeState('node-2', 'done');
+        if (seen.has('quality_check')) setNodeState('node-qc', 'done');
+        if (seen.has('human_review')) setNodeState('node-hr', 'done');
+        if (seen.has('generate')) setNodeState('node-3', 'done');
+        // 回溯横幅
+        const retries = steps.filter(s => s.node === 'retry_increment').length;
+        if (retries > 0) {
+            document.getElementById('retry-banner-text').textContent =
+                `质量检查未达标，已回溯重试 ${retries} 次（重新执行策略检索）`;
+            document.getElementById('retry-banner').classList.add('show');
+        }
+    }
 
     // ========== 运行工作流 ==========
     async function runWorkflow() {
         const asr = document.getElementById('input-asr').value.trim();
         const filename = document.getElementById('input-filename').value.trim();
-        if (!asr) { alert('请输入 ASR 文本'); return; }
+        if (!asr) { showToast('请输入 ASR 文本'); return; }
 
         const humanMode = document.getElementById('mode-human-review').checked;
 
         // 重置状态
+        clearNodeTimers();
+        resetNodes();
+        pausedState = null;
         document.getElementById('result-area').style.display = 'none';
         document.getElementById('human-review-panel').style.display = 'none';
+        document.getElementById('plan-card').style.display = 'none';
+        // 上一轮的残留状态一并清理（步骤面板/展开的 JSON/审核意见）
+        document.getElementById('steps-panel').style.display = 'none';
+        document.getElementById('json-output').style.display = 'none';
+        document.getElementById('review-feedback').value = '';
         document.getElementById('loading').classList.add('active');
         document.getElementById('btn-analyze').disabled = true;
-        pausedState = null;
 
-        ['node-1', 'node-2', 'node-qc', 'node-hr', 'node-3'].forEach(id => {
-            document.getElementById(id).classList.remove('active', 'done');
-        });
-
-        // 模拟节点进度
-        setTimeout(() => document.getElementById('node-1').classList.add('active'), 500);
-        setTimeout(() => { document.getElementById('node-1').classList.remove('active'); document.getElementById('node-1').classList.add('done'); }, 3000);
-        setTimeout(() => document.getElementById('node-2').classList.add('active'), 3500);
-        setTimeout(() => { document.getElementById('node-2').classList.remove('active'); document.getElementById('node-2').classList.add('done'); }, 6000);
-        setTimeout(() => document.getElementById('node-qc').classList.add('active'), 6500);
-        setTimeout(() => { document.getElementById('node-qc').classList.remove('active'); document.getElementById('node-qc').classList.add('done'); }, 8000);
+        // 模拟节点推进动画（结果返回后由真实 steps 终态覆盖）
+        nodeTimers.push(setTimeout(() => setNodeState('node-1', 'active'), 500));
+        nodeTimers.push(setTimeout(() => setNodeState('node-1', 'done'), 3000));
+        nodeTimers.push(setTimeout(() => setNodeState('node-2', 'active'), 3500));
+        nodeTimers.push(setTimeout(() => setNodeState('node-2', 'done'), 6000));
+        nodeTimers.push(setTimeout(() => setNodeState('node-qc', 'active'), 6500));
+        nodeTimers.push(setTimeout(() => setNodeState('node-qc', 'done'), 8000));
         if (humanMode) {
-            setTimeout(() => document.getElementById('node-hr').classList.add('active'), 8500);
-        } else {
-            setTimeout(() => document.getElementById('node-hr').classList.add('done'), 8500);
+            nodeTimers.push(setTimeout(() => setNodeState('node-hr', 'active'), 8500));
         }
 
         try {
             const endpoint = humanMode ? '/api/analyze_interrupt' : '/api/analyze';
-            const resp = await fetch(endpoint, {
+            const data = await apiFetch(endpoint, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({asr_text: asr, filename: filename}),
             });
-            const data = await resp.json();
 
+            clearNodeTimers();
             if (humanMode && data.status === 'paused') {
-                // 暂停模式：显示审核面板
+                // 暂停模式：渲染已完成部分 + 审核面板
                 renderPartialResult(data);
+                markNodesFromSteps(data.steps || []);
+                setNodeState('node-hr', 'active');   // 审核节点高亮等待操作
                 document.getElementById('human-review-panel').style.display = 'block';
-                document.getElementById('review-score').textContent = (data.state?.quality_score || 0).toFixed(1);
-                document.getElementById('review-retry').textContent = data.state?.retry_count || 0;
+                document.getElementById('review-score').textContent =
+                    Number(data.state?.quality_score || 0).toFixed(1);
+                document.getElementById('review-retry').textContent =
+                    data.state?.retry_count || 0;
                 pausedState = data.state;
+                document.getElementById('human-review-panel').scrollIntoView({behavior: 'smooth', block: 'center'});
+                showToast('工作流已暂停在人工审核节点，等待你的操作', 'ok');
             } else {
                 // 自动模式或已完成
                 renderResult(data);
-                document.getElementById('node-3').classList.remove('active');
-                document.getElementById('node-3').classList.add('done');
+                markNodesFromSteps(data.steps || []);
             }
-        } catch (e) {
-            alert('请求失败: ' + e.message);
+        } catch (_) {
+            // 失败：清掉动画定时器（否则节点会继续「假推进」），节点回灰
+            clearNodeTimers();
+            resetNodes();
         } finally {
             document.getElementById('loading').classList.remove('active');
             document.getElementById('btn-analyze').disabled = false;
@@ -602,17 +864,23 @@
 
     // ========== 人工审核恢复 ==========
     async function resumeHumanReview(approved) {
-        if (!pausedState) { alert('无暂停状态'); return; }
+        if (!pausedState) { showToast('无暂停状态'); return; }
 
         const feedback = document.getElementById('review-feedback').value.trim();
         document.getElementById('human-review-panel').style.display = 'none';
         document.getElementById('loading').classList.add('active');
+        document.getElementById('btn-analyze').disabled = true;  // 防止 resume 期间并发启动新运行
+        setNodeState('node-hr', 'done');
 
-        // 显示节点3进度
-        setTimeout(() => document.getElementById('node-3').classList.add('active'), 500);
+        if (approved) {
+            nodeTimers.push(setTimeout(() => setNodeState('node-3', 'active'), 300));
+        } else {
+            // 打回：检索节点重新执行
+            setNodeState('node-2', 'active');
+        }
 
         try {
-            const resp = await fetch('/api/resume', {
+            const data = await apiFetch('/api/resume', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -621,104 +889,89 @@
                     feedback: feedback,
                 }),
             });
-            const data = await resp.json();
+            clearNodeTimers();
             renderResult(data);
-
-            document.getElementById('node-3').classList.remove('active');
-            document.getElementById('node-3').classList.add('done');
-        } catch (e) {
-            alert('恢复失败: ' + e.message);
+            markNodesFromSteps(data.steps || []);
+            pausedState = null;   // 仅成功后丢弃暂停状态
+        } catch (_) {
+            // 失败：恢复审核面板并保留 pausedState，允许用户重试
+            // （interrupt 是客户端持有状态的伪暂停，丢了状态只能整轮重跑）
+            clearNodeTimers();
+            resetNodes();
+            setNodeState('node-hr', 'active');
+            document.getElementById('human-review-panel').style.display = 'block';
+            showToast('恢复失败：审核面板已恢复，可直接重试', 'ok');
         } finally {
+            clearNodeTimers();
             document.getElementById('loading').classList.remove('active');
             document.getElementById('btn-analyze').disabled = false;
-            pausedState = null;
             loadStats();
         }
+    }
+
+    // ========== SVG 情绪曲线（面积图 + 数据点 + 悬浮提示） ==========
+    function renderEmotionCurve(containerId, points) {
+        const el = document.getElementById(containerId);
+        const pts = (points || []).filter(p => p && p.intensity != null);
+        if (!pts.length) { el.innerHTML = '<p class="text-muted mb-0 p-2">无情绪曲线数据</p>'; return; }
+
+        const W = 640, H = 170, PL = 34, PR = 14, PT = 14, PB = 34;
+        const iw = W - PL - PR, ih = H - PT - PB;
+        const n = pts.length;
+        const x = i => PL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+        const y = v => PT + (1 - Math.max(0, Math.min(1, Number(v) || 0))) * ih;
+
+        const coords = pts.map((p, i) => [x(i), y(p.intensity)]);
+        const line = coords.map(([cx, cy], i) => `${i ? 'L' : 'M'}${cx.toFixed(1)},${cy.toFixed(1)}`).join(' ');
+        const area = `${line} L${coords[n - 1][0].toFixed(1)},${(PT + ih).toFixed(1)} L${coords[0][0].toFixed(1)},${(PT + ih).toFixed(1)} Z`;
+
+        el.innerHTML = `
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="情绪曲线">
+            <defs>
+                <linearGradient id="eg-${containerId}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#3987e5" stop-opacity="0.45"/>
+                    <stop offset="100%" stop-color="#3987e5" stop-opacity="0.02"/>
+                </linearGradient>
+            </defs>
+            ${[0, 0.5, 1].map(t => `
+                <line x1="${PL}" x2="${W - PR}" y1="${y(t)}" y2="${y(t)}" stroke="#2c2c2a" stroke-dasharray="3 4"/>
+                <text x="${PL - 6}" y="${y(t) + 4}" fill="#a3a29b" font-size="10" text-anchor="end">${t}</text>
+            `).join('')}
+            <path d="${area}" fill="url(#eg-${containerId})"/>
+            <path d="${line}" fill="none" stroke="#3987e5" stroke-width="2.5" stroke-linejoin="round"/>
+            ${coords.map(([cx, cy], i) => `
+                <circle cx="${cx}" cy="${cy}" r="4.5" fill="#141413" stroke="#3987e5" stroke-width="2">
+                    <title>${esc(pts[i].time || '')} ${esc(pts[i].label || '')} 强度 ${Number(pts[i].intensity || 0).toFixed(2)}</title>
+                </circle>
+                <text x="${cx}" y="${cy - 10}" fill="#d6d5cd" font-size="10" text-anchor="middle">${esc(pts[i].label || '')}</text>
+                <text x="${cx}" y="${H - 12}" fill="#a3a29b" font-size="10" text-anchor="middle">${esc(pts[i].time || '')}</text>
+            `).join('')}
+        </svg>`;
     }
 
     // ========== 渲染暂停时的部分结果 ==========
     function renderPartialResult(data) {
         document.getElementById('result-area').style.display = 'block';
+        document.getElementById('plan-card').style.display = 'none';
         renderSteps(data.steps || []);
         const state = data.state || {};
 
-        // 节点1：分析结果
-        const a = state.analysis || {};
-        const hook = a.hook_analysis || {};
-        document.getElementById('hook-result').innerHTML = `
-            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
-            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
-            <strong>效果预估：</strong>${((hook.effectiveness || 0) * 100).toFixed(0)}%
-        `;
-        document.getElementById('category-result').innerHTML = `
-            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
-            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
-        `;
-
-        const ec = a.emotion_curve || [];
-        document.getElementById('emotion-curve').innerHTML = ec.map(p => `
-            <div class="text-center" style="width:80px">
-                <div class="emotion-bar">
-                    <div class="emotion-fill" style="width:${(p.intensity||0)*100}%;
-                         background: linear-gradient(to top, #3b82f6, #ef4444)"></div>
-                </div>
-                <small class="text-muted">${p.time||''}</small><br>
-                <small>${p.label||p.emotion||p.name||''}</small>
-            </div>
-        `).join('');
-
-        const kf = a.key_features || [];
-        document.getElementById('key-features').innerHTML = kf.map(f =>
-            `<span class="badge bg-dark me-1 mb-1" style="font-size:13px">${f}</span>`
-        ).join('');
-
-        // 节点2：策略检索
-        const s = state.strategy || {};
-        const refs = s.retrieved_refs || [];
-        document.getElementById('retrieved-refs').innerHTML = refs.length > 0 ?
-            '<div class="row">' + refs.map(r => `
-                <div class="col-md-4 mb-2">
-                    <div class="segment-block ref-card">
-                        <strong>${r.title}</strong><br>
-                        <small class="text-muted">${r.hook_text || ''}</small><br>
-                        <span class="badge bg-info">${r.category}/${r.sub_category}</span>
-                        ${r.similarity ? `<span class="badge bg-secondary">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
-                        <span class="badge bg-warning text-dark">得分 ${r.score || '-'}</span>
-                    </div>
-                </div>
-            `).join('') + '</div>' : '<p class="text-muted">无匹配结果</p>';
-
-        document.getElementById('strategy-summary').innerHTML = `
-            <div class="segment-block">
-                <h6>策略总结</h6>
-                <p>${s.strategy_summary || '-'}</p>
-                <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
-                <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
-            </div>
-        `;
+        renderAnalysisCard(state.analysis || {});
+        renderStrategyCard(state.strategy || {});
 
         // 节点3：暂未生成
-        document.getElementById('segments-timeline').innerHTML = '<p class="text-muted">等待人工审核后生成...</p>';
-        document.getElementById('beat-points').innerHTML = '';
-        document.getElementById('est-ctr').textContent = '-';
-        document.getElementById('est-retention').textContent = '-';
-        document.getElementById('quality-score').textContent = '-';
-        document.getElementById('json-output').textContent = '等待审核...';
+        document.getElementById('json-output').textContent = '等待人工审核后生成...';
 
         // 填充审核面板内容
-        document.getElementById('review-category').innerHTML = `
-            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
-            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
-        `;
-        document.getElementById('review-hook').innerHTML = `
-            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
-            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
-            <strong>效果预估：</strong>${((hook.effectiveness || 0) * 100).toFixed(0)}%
-        `;
+        const a = state.analysis || {};
+        const hook = a.hook_analysis || {};
+        const s = state.strategy || {};
+        document.getElementById('review-category').innerHTML = renderCategoryBadges(a);
+        document.getElementById('review-hook').innerHTML = renderHookBlock(hook);
         document.getElementById('review-strategy').innerHTML = `
-            <p class="mb-1">${s.strategy_summary || '-'}</p>
-            <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
-            <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
+            <p class="mb-1">${esc(s.strategy_summary || '-')}</p>
+            <strong>推荐钩子：</strong>${esc(s.recommended_hook || '-')}<br>
+            <strong>推荐节奏：</strong>${esc(s.recommended_emotion_flow || '-')}
         `;
     }
 
@@ -727,99 +980,121 @@
         document.getElementById('result-area').style.display = 'block';
         renderSteps(data.steps || []);
 
-        // 节点1：分析结果
-        const a = data.analysis || {};
-        const hook = a.hook_analysis || {};
-        document.getElementById('hook-result').innerHTML = `
-            <strong>钩子文案：</strong>${hook.hook_text || '-'}<br>
-            <strong>类型：</strong><span class="badge bg-info">${hook.hook_type || '-'}</span>
-            <strong>效果预估：</strong>${(hook.effectiveness * 100).toFixed(0)}%
-        `;
-        document.getElementById('category-result').innerHTML = `
-            <span class="badge badge-${a.category || '男频'}" style="font-size:14px">${a.category || '-'}</span>
-            <span class="badge bg-secondary ms-1" style="font-size:14px">${a.sub_category || '-'}</span>
-        `;
+        renderAnalysisCard(data.analysis || {});
+        renderStrategyCard(data.strategy || {});
 
-        // 情绪曲线
-        const ec = a.emotion_curve || [];
-        document.getElementById('emotion-curve').innerHTML = ec.map(p => `
-            <div class="text-center" style="width:80px">
-                <div class="emotion-bar">
-                    <div class="emotion-fill" style="width:${(p.intensity||0)*100}%;
-                         background: linear-gradient(to top, #3b82f6, #ef4444)"></div>
+        // 节点3：剪辑方案
+        const p = data.plan || {};
+        document.getElementById('plan-card').style.display = 'block';
+        const schemaBadge = document.getElementById('plan-schema-badge');
+        if (p.schema_validated) {
+            schemaBadge.textContent = 'Schema 校验通过';
+            schemaBadge.className = 'chip chip-success float-end';
+            schemaBadge.style.display = '';
+        } else {
+            schemaBadge.style.display = 'none';
+        }
+
+        const segments = p.segments || [];
+        document.getElementById('segments-timeline').innerHTML = segments.length ? segments.map(seg => `
+            <div class="segment-block mb-2">
+                <div class="d-flex justify-content-between flex-wrap">
+                    <strong>片段 ${esc(seg.segment_id)}: ${esc(seg.scene_description)}</strong>
+                    <span class="chip chip-blue">${esc(seg.start_time)} → ${esc(seg.end_time)}（${esc(seg.duration)}）</span>
                 </div>
-                <small class="text-muted">${p.time||''}</small><br>
-                <small>${p.label||p.emotion||p.name||''}</small>
+                <div class="row mt-2 small">
+                    <div class="col-md-4"><strong>运镜：</strong>${esc(seg.camera_movement)}</div>
+                    <div class="col-md-4"><strong>BGM：</strong>${esc(seg.bgm_cue)}</div>
+                    <div class="col-md-4"><strong>转场：</strong>${esc(seg.transition)}</div>
+                </div>
+                <div class="row mt-1 small">
+                    <div class="col-md-6"><strong>字幕：</strong>${esc(seg.text_overlay)}</div>
+                    <div class="col-md-3"><strong>情绪：</strong>${esc(seg.emotion_target)}</div>
+                    <div class="col-md-3"><strong>转化：</strong><span class="text-warning">${esc(seg.conversion_hook || '-')}</span></div>
+                </div>
             </div>
-        `).join('');
+        `).join('') : '<p class="text-muted">无片段</p>';
 
-        // 关键特征
+        // 音画卡点
+        const bp = p.beat_points || [];
+        document.getElementById('beat-points').innerHTML = bp.length ? bp.map(b => {
+            const intensity = Math.max(0, Number(b.intensity) || 0);
+            return `<span class="beat-chip" title="${esc(b.description || '')}">
+                        <i class="beat-dot" style="background: hsl(211, 62%, ${Math.round(38 + intensity * 30)}%)"></i>
+                        ${esc(b.time)} · ${esc(b.type)} · <span style="color:#b8b7ae">强度 ${intensity.toFixed(1)}</span>
+                    </span>`;
+        }).join('') : '<p class="text-muted mb-0">无卡点数据</p>';
+
+        // 方案情绪曲线
+        renderEmotionCurve('plan-emotion-curve', p.emotion_curve);
+
+        // 指标（plan_score 与 quality_score 分离，均读顶层字段）
+        document.getElementById('est-ctr').textContent = ((Number(p.estimated_ctr) || 0) * 100).toFixed(1) + '%';
+        document.getElementById('est-retention').textContent = ((Number(p.estimated_retention) || 0) * 100).toFixed(1) + '%';
+        document.getElementById('quality-score').textContent = data.quality_score ?? '-';
+        document.getElementById('plan-score').textContent = data.plan_score ?? '-';
+
+        // JSON 原文
+        document.getElementById('json-output').textContent = JSON.stringify(p, null, 2);
+    }
+
+    // 节点1 卡片渲染
+    function renderAnalysisCard(a) {
+        const hook = a.hook_analysis || {};
+        document.getElementById('hook-result').innerHTML = renderHookBlock(hook);
+        document.getElementById('category-result').innerHTML = renderCategoryBadges(a);
+        renderEmotionCurve('emotion-curve', a.emotion_curve);
+
         const kf = a.key_features || [];
-        document.getElementById('key-features').innerHTML = kf.map(f =>
-            `<span class="badge bg-dark me-1 mb-1" style="font-size:13px">${f}</span>`
-        ).join('');
+        document.getElementById('key-features').innerHTML = kf.length
+            ? kf.map(f => `<span class="chip chip-neutral me-1 mb-1">${esc(f)}</span>`).join('')
+            : '<span class="text-muted">无</span>';
+    }
 
-        // 节点2：策略检索
-        const s = data.strategy || {};
+    function renderHookBlock(hook) {
+        let eff = Number(hook.effectiveness);
+        if (isNaN(eff)) eff = NaN;
+        else if (eff > 1) eff = eff / 100;   // 双保险：后端已归一化，防 LLM 百分制漏网
+        return `
+            <strong>钩子文案：</strong>${esc(hook.hook_text || '-')}<br>
+            <strong>类型：</strong><span class="chip chip-neutral">${esc(hook.hook_type || '-')}</span>
+            <strong>效果预估：</strong>${isNaN(eff) ? '-' : (eff * 100).toFixed(0) + '%'}
+        `;
+    }
+
+    function renderCategoryBadges(a) {
+        const catChip = a.category === '女频' ? 'chip-female' : 'chip-male';
+        return `
+            <span class="chip ${catChip}" style="font-size:13px">${esc(a.category || '-')}</span>
+            <span class="chip chip-blue" style="font-size:13px">${esc(a.sub_category || '-')}</span>
+        `;
+    }
+
+    // 节点2 卡片渲染
+    function renderStrategyCard(s) {
         const refs = s.retrieved_refs || [];
-        document.getElementById('retrieved-refs').innerHTML = refs.length > 0 ?
-            '<div class="row">' + refs.map(r => `
+        document.getElementById('retrieved-refs').innerHTML = refs.length
+            ? refs.map(r => `
                 <div class="col-md-4 mb-2">
                     <div class="segment-block ref-card">
-                        <strong>${r.title}</strong><br>
-                        <small class="text-muted">${r.hook_text || ''}</small><br>
-                        <span class="badge bg-info">${r.category}/${r.sub_category}</span>
-                        ${r.similarity ? `<span class="badge bg-secondary">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
-                        <span class="badge bg-warning text-dark">得分 ${r.score || '-'}</span>
+                        <strong style="color: var(--text);">${esc(r.title)}</strong><br>
+                        <small style="color: #b8b7ae;">${esc(r.hook_text || '')}</small><br>
+                        <span class="chip chip-neutral mt-1">${esc(r.category)} / ${esc(r.sub_category)}</span>
+                        ${Number(r.similarity) > 0 ? `<span class="chip chip-cyan mt-1">相似度 ${(Number(r.similarity) * 100).toFixed(0)}%</span>` : ''}
+                        <span class="chip chip-warn mt-1">得分 ${esc(r.score ?? '-')}</span>
                     </div>
                 </div>
-            `).join('') + '</div>' : '<p class="text-muted">无匹配结果</p>';
+            `).join('')
+            : '<p class="text-muted">无匹配结果</p>';
 
         document.getElementById('strategy-summary').innerHTML = `
             <div class="segment-block">
                 <h6>策略总结</h6>
-                <p>${s.strategy_summary || '-'}</p>
-                <strong>推荐钩子：</strong>${s.recommended_hook || '-'}<br>
-                <strong>推荐节奏：</strong>${s.recommended_emotion_flow || '-'}
+                <p>${esc(s.strategy_summary || '-')}</p>
+                <strong>推荐钩子：</strong>${esc(s.recommended_hook || '-')}<br>
+                <strong>推荐节奏：</strong>${esc(s.recommended_emotion_flow || '-')}
             </div>
         `;
-
-        // 节点3：剪辑方案
-        const p = data.plan || {};
-        const segments = p.segments || [];
-        document.getElementById('segments-timeline').innerHTML = segments.map(seg => `
-            <div class="segment-block">
-                <div class="d-flex justify-content-between">
-                    <strong>片段 ${seg.segment_id}: ${seg.scene_description}</strong>
-                    <span class="badge bg-primary">${seg.start_time} → ${seg.end_time}</span>
-                </div>
-                <div class="row mt-2 small">
-                    <div class="col-md-4"><strong>运镜：</strong>${seg.camera_movement}</div>
-                    <div class="col-md-4"><strong>BGM：</strong>${seg.bgm_cue}</div>
-                    <div class="col-md-4"><strong>转场：</strong>${seg.transition}</div>
-                </div>
-                <div class="row mt-1 small">
-                    <div class="col-md-6"><strong>字幕：</strong>${seg.text_overlay}</div>
-                    <div class="col-md-3"><strong>情绪：</strong>${seg.emotion_target}</div>
-                    <div class="col-md-3"><strong>转化：</strong><span class="text-warning">${seg.conversion_hook || '-'}</span></div>
-                </div>
-            </div>
-        `).join('');
-
-        // 音画卡点
-        const bp = p.beat_points || [];
-        document.getElementById('beat-points').innerHTML = bp.map(b => `
-            <span class="beat-dot" style="background: hsl(${b.intensity*120}, 70%, 50%)" title="${b.description}"></span>
-            <small>${b.time} ${b.type}</small>
-        `).join(' &nbsp; ');
-
-        // 指标
-        document.getElementById('est-ctr').textContent = ((p.estimated_ctr || 0) * 100).toFixed(1) + '%';
-        document.getElementById('est-retention').textContent = ((p.estimated_retention || 0) * 100).toFixed(1) + '%';
-        document.getElementById('quality-score').textContent = (p.quality_score || data.plan?.quality_score || '-');
-
-        // JSON 原文
-        document.getElementById('json-output').textContent = JSON.stringify(p, null, 2);
     }
 
     function toggleJson() {
@@ -828,6 +1103,29 @@
     }
 
     // ========== 执行步骤详情 ==========
+    const NODE_NAMES = {
+        'analyze': '原视频深度理解',
+        'retrieve': '爆款策略检索',
+        'quality_check': '质量检查',
+        'retry_increment': '回溯重试',
+        'human_review': '人工审核',
+        'generate': '剪辑方案生成',
+    };
+    const NODE_COLORS = {
+        // categorical 固定顺序（validator 验证通过：worst CVD dE 8.4 / normal 19.3）
+        'analyze': '#3987e5',         // blue
+        'retrieve': '#d95926',        // orange
+        'quality_check': '#199e70',   // aqua
+        'retry_increment': '#c98500', // yellow
+        'human_review': '#d55181',    // magenta
+        'generate': '#008300',        // green
+    };
+    // 徽章文字用亮色变体（实底白字对比度不足，tint 底 + 亮字 >= 5.5:1）
+    const NODE_TEXT_COLORS = {
+        'analyze': '#6da7ec', 'retrieve': '#f08551', 'quality_check': '#3ecf95',
+        'retry_increment': '#e8b04a', 'human_review': '#ef8bab', 'generate': '#4fc36a',
+    };
+
     function renderSteps(steps) {
         const panel = document.getElementById('steps-panel');
         const list = document.getElementById('steps-list');
@@ -838,34 +1136,26 @@
         panel.style.display = 'block';
         document.getElementById('steps-count').textContent = steps.length + ' 步';
 
-        const nodeNames = {
-            'analyze': '原视频深度理解',
-            'retrieve': '爆款策略检索',
-            'quality_check': '质量检查',
-            'retry_increment': '回溯重试',
-            'human_review': '人工审核',
-            'generate': '剪辑方案生成',
-        };
-        const nodeColors = {
-            'analyze': '#3b82f6',
-            'retrieve': '#8b5cf6',
-            'quality_check': '#10b981',
-            'retry_increment': '#f59e0b',
-            'human_review': '#f59e0b',
-            'generate': '#ec4899',
-        };
-
         list.innerHTML = steps.map((step, i) => {
-            const color = nodeColors[step.node] || '#6366f1';
-            const name = nodeNames[step.node] || step.node;
+            const color = NODE_COLORS[step.node] || '#78766f';
+            const textColor = NODE_TEXT_COLORS[step.node] || '#c3c2b7';
+            const name = NODE_NAMES[step.node] || step.node;
             const arrow = i < steps.length - 1 ? '<div class="step-arrow"><i class="bi bi-arrow-down"></i></div>' : '';
+            // 数据来源徽章：真实 LLM 输出 or 兜底演示数据
+            const mode = step.output && step.output.llm_mode;
+            const modeBadge = mode
+                ? (mode === 'real'
+                    ? '<span class="llm-mode-badge llm-real">真实 LLM</span>'
+                    : '<span class="llm-mode-badge llm-mock">兜底演示数据</span>')
+                : '';
             return `
                 <div class="step-item" style="border-left-color: ${color}">
                     <div class="step-header">
-                        <span class="step-badge" style="background: ${color}; color: white;">${step.node}</span>
-                        <strong>${name}</strong>
+                        <span class="step-badge" style="--chip-accent: ${textColor}; border-left-color: ${color};">${esc(step.node)}</span>
+                        <strong>${esc(name)}</strong>
+                        ${modeBadge}
                         <span class="step-time">${step.duration_ms}ms</span>
-                        <span class="step-time">${step.timestamp || ''}</span>
+                        <span class="step-time">${esc(step.timestamp || '')}</span>
                     </div>
                     <div class="step-io">
                         <div class="step-io-block">
@@ -885,99 +1175,156 @@
     function formatStepData(data) {
         if (!data) return '-';
         return Object.entries(data).map(([k, v]) => {
-            let val = v;
+            let val;
             if (Array.isArray(v)) val = v.join(', ');
             else if (typeof v === 'object') val = JSON.stringify(v);
-            return `<div><span style="color:#64748b">${k}:</span> ${val}</div>`;
+            else val = v;
+            return `<div><span style="color:#a3a29b">${esc(k)}:</span> ${esc(val)}</div>`;
         }).join('');
     }
 
     // ========== 知识库 ==========
-    async function loadRefs() {
-        const category = document.getElementById('filter-category').value;
-        const url = category ? `/api/references?category=${encodeURIComponent(category)}` : '/api/references';
-        const refs = await fetch(url).then(r => r.json());
 
-        document.getElementById('refs-list').innerHTML = refs.map(r => `
+    // 统一素材卡片模板（列表/搜索共用，避免两套模板漂移）
+    function renderRefCard(r, showSimilarity) {
+        const tags = (r.tags || []).map(t => `<span class="chip chip-neutral">${esc(t)}</span>`).join(' ');
+        const sim = showSimilarity && Number(r.similarity) > 0
+            ? `<span class="chip chip-success">相似度 ${(Number(r.similarity) * 100).toFixed(0)}%</span>` : '';
+        const catChip = r.category === '女频' ? 'chip-female' : 'chip-male';
+        return `
             <div class="col-md-4 mb-3">
                 <div class="card ref-card">
                     <div class="card-body">
-                        <div class="d-flex justify-content-between">
-                            <strong>${r.title}</strong>
-                            <span class="badge badge-${r.category}">${r.category}</span>
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <strong style="color: var(--text); line-height: 1.45;">${esc(r.title)}</strong>
+                            <span class="chip ${catChip}">${esc(r.category)}</span>
                         </div>
-                        <p class="mt-2 mb-1"><small>${r.hook_text}</small></p>
-                        <span class="badge bg-secondary">${r.sub_category}</span>
-                        <span class="badge bg-info">${r.hook_type}</span>
-                        ${r.tags.map(t => `<span class="badge bg-dark">${t}</span>`).join(' ')}
-                        <div class="mt-2 small text-muted">
-                            CTR: ${(r.ctr*100).toFixed(1)}% | 3s停留: ${(r.retention_3s*100).toFixed(0)}% | 完播: ${(r.completion_rate*100).toFixed(0)}% | 得分: ${r.score}
+                        <p class="mt-2 mb-2" style="font-size: 13.5px; color: var(--text-2); line-height: 1.65;">${esc(r.hook_text || '')}</p>
+                        <div class="d-flex flex-wrap gap-1">
+                            <span class="chip chip-blue">${esc(r.sub_category)}</span>
+                            <span class="chip chip-neutral">${esc(r.hook_type || '')}</span>
+                            ${sim}
+                            ${tags}
+                        </div>
+                        <div class="metric-grid">
+                            <div class="metric"><div class="metric-label">CTR</div><div class="metric-value">${((Number(r.ctr) || 0) * 100).toFixed(1)}%</div></div>
+                            <div class="metric"><div class="metric-label">3秒停留</div><div class="metric-value">${((Number(r.retention_3s) || 0) * 100).toFixed(0)}%</div></div>
+                            <div class="metric"><div class="metric-label">完播率</div><div class="metric-value">${((Number(r.completion_rate) || 0) * 100).toFixed(0)}%</div></div>
+                            <div class="metric"><div class="metric-label">综合得分</div><div class="metric-value">${esc(r.score ?? '-')}</div></div>
                         </div>
                     </div>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+    }
+
+    async function loadRefs() {
+        const category = document.getElementById('filter-category').value;
+        const url = category ? `/api/references?category=${encodeURIComponent(category)}` : '/api/references';
+        try {
+            const refs = await apiFetch(url);
+            document.getElementById('refs-list').innerHTML = refs.length
+                ? refs.map(r => renderRefCard(r, false)).join('')
+                : emptyRefsHint('当前赛道暂无素材');
+        } catch (_) {}
+    }
+
+    function emptyRefsHint(text) {
+        return `<div class="col-12"><p class="text-muted"><i class="bi bi-inbox"></i> ${esc(text)}</p></div>`;
     }
 
     async function searchRefs() {
         const query = document.getElementById('search-input').value.trim();
-        if (!query) return;
-        const refs = await fetch(`/api/search?query=${encodeURIComponent(query)}`, {method: 'POST'}).then(r => r.json());
-        document.getElementById('refs-list').innerHTML = refs.map(r => `
-            <div class="col-md-4 mb-3">
-                <div class="card ref-card">
-                    <div class="card-body">
-                        <strong>${r.title}</strong>
-                        <span class="badge badge-${r.category}">${r.category}</span>
-                        ${r.similarity ? `<span class="badge bg-success">相似度 ${(r.similarity*100).toFixed(0)}%</span>` : ''}
-                        <p class="mt-2 mb-1"><small>${r.hook_text || ''}</small></p>
-                        <span class="badge bg-secondary">${r.sub_category}</span>
-                        <span class="badge bg-warning text-dark">得分 ${r.score}</span>
-                    </div>
-                </div>
-            </div>
-        `).join('');
+        if (!query) { showToast('请输入搜索内容'); return; }
+        const category = document.getElementById('filter-category').value;
+        let url = `/api/search?query=${encodeURIComponent(query)}`;
+        if (category) url += `&category=${encodeURIComponent(category)}`;
+        try {
+            const refs = await apiFetch(url, {method: 'POST'});
+            document.getElementById('refs-list').innerHTML = refs.length
+                ? refs.map(r => renderRefCard(r, true)).join('')
+                : emptyRefsHint('无语义匹配结果，试试换个描述或清除赛道筛选');
+        } catch (_) {}
+    }
+
+    function clearSearch() {
+        document.getElementById('search-input').value = '';
+        loadRefs();
+    }
+
+    function onFilterChange() {
+        // 有搜索词时切换赛道 = 带赛道重新搜索；否则刷新列表
+        if (document.getElementById('search-input').value.trim()) searchRefs();
+        else loadRefs();
     }
 
     // ========== 历史记录 ==========
-    // 缓存历史数据
     let historyAnalyses = [];
     let historyPlans = [];
 
     document.querySelector('[data-bs-target="#tab-history"]').addEventListener('shown.bs.tab', async () => {
-        historyAnalyses = await fetch('/api/analyses').then(r => r.json());
-        document.getElementById('history-analyses').innerHTML = historyAnalyses.map((a, i) => `
-            <div class="segment-block" style="cursor:pointer" onclick="showAnalysisDetail(${i})">
-                <div class="d-flex justify-content-between align-items-center">
-                    <strong>${a.filename || '-'}</strong>
-                    <span class="badge badge-${a.category || ''}">${a.category || '-'}/${a.sub_category || '-'}</span>
-                </div>
-                <p class="mb-0 small mt-1">${(a.key_features || []).join(', ')}</p>
-                <small class="text-muted">ID: ${a.id} | 点击查看详情</small>
-            </div>
-        `).join('') || '<p class="text-muted">暂无记录</p>';
-
-        historyPlans = await fetch('/api/plans').then(r => r.json());
-        document.getElementById('history-plans').innerHTML = historyPlans.map((p, i) => {
-            const plan = p.plan_json || {};
-            return `<div class="segment-block" style="cursor:pointer" onclick="showPlanDetail(${i})">
-                <div class="d-flex justify-content-between align-items-center">
-                    <strong>${plan.title || '方案#' + p.id}</strong>
-                    <div>
-                        <span class="badge bg-primary">质量 ${p.quality_score?.toFixed(1) || '-'}</span>
-                        <span class="badge bg-secondary">${p.status}</span>
+        try {
+            historyAnalyses = await apiFetch('/api/analyses');
+            document.getElementById('history-analyses').innerHTML = historyAnalyses.map((a, i) => {
+                const catChip = a.category === '女频' ? 'chip-female' : 'chip-male';
+                return `
+                <div class="segment-block mb-2" style="cursor:pointer" onclick="showAnalysisDetail(${i})">
+                    <div class="d-flex justify-content-between align-items-center gap-2">
+                        <strong style="color: var(--text);">${esc(a.filename || '-')}</strong>
+                        <span class="chip ${catChip}">${esc(a.category || '-')}</span>
                     </div>
+                    <p class="mb-1 mt-1" style="font-size: 13px; color: #b8b7ae; line-height: 1.6;">${esc((a.key_features || []).join(' · '))}</p>
+                    <small class="text-muted">ID ${esc(a.id)} · ${esc(a.sub_category || '-')} · 点击查看详情</small>
                 </div>
-                <p class="mb-0 small mt-1">${plan.strategy_summary || '-'}</p>
-                <div class="small text-muted">
-                    CTR: ${((plan.estimated_ctr||0)*100).toFixed(1)}% |
-                    停留: ${((plan.estimated_retention||0)*100).toFixed(1)}% |
-                    片段: ${(plan.segments||[]).length} 个 |
-                    点击查看详情
-                </div>
-            </div>`;
-        }).join('') || '<p class="text-muted">暂无记录</p>';
+            `;}).join('') || '<p class="text-muted">暂无记录</p>';
+        } catch (_) {}
+
+        try {
+            historyPlans = await apiFetch('/api/plans');
+            const STATUS_CHIPS = { auto: 'chip-neutral', human_approved: 'chip-success', human_rejected: 'chip-warn' };
+            const STATUS_NAMES = { auto: '自动生成', human_approved: '人工通过', human_rejected: '人工打回后重生成' };
+            document.getElementById('history-plans').innerHTML = historyPlans.map((p, i) => {
+                const plan = p.plan_json || {};
+                const status = STATUS_CHIPS[p.status] || 'chip-neutral';
+                return `<div class="segment-block mb-2">
+                    <div class="d-flex justify-content-between align-items-center gap-2">
+                        <strong style="color: var(--text); cursor:pointer" onclick="showPlanDetail(${i})">${esc(plan.title || '方案#' + p.id)}</strong>
+                        <span class="chip ${status}">${esc(STATUS_NAMES[p.status] || p.status)}</span>
+                    </div>
+                    <p class="mb-0 mt-1" style="font-size: 13px; color: #b8b7ae; line-height: 1.6;">${esc(plan.strategy_summary || '-')}</p>
+                    <div class="metric-grid cols-3">
+                        <div class="metric"><div class="metric-label">质量分</div><div class="metric-value">${p.quality_score != null ? Number(p.quality_score).toFixed(1) : '-'}</div></div>
+                        <div class="metric"><div class="metric-label">预估 CTR</div><div class="metric-value">${((Number(plan.estimated_ctr) || 0) * 100).toFixed(1)}%</div></div>
+                        <div class="metric"><div class="metric-label">片段数</div><div class="metric-value">${(plan.segments || []).length}</div></div>
+                    </div>
+                    <div class="feedback-row">
+                        <input type="number" class="form-control form-control-sm" id="fb-score-${esc(p.id)}"
+                               placeholder="投流得分" min="0" max="100">
+                        <button class="btn btn-sm btn-outline-warning" onclick="submitFeedback(${esc(p.id)})">
+                            <i class="bi bi-arrow-repeat"></i> 效果回传
+                        </button>
+                    </div>
+                </div>`;
+            }).join('') || '<p class="text-muted">暂无记录</p>';
+        } catch (_) {}
     });
+
+    // 数据飞轮：投流效果回传
+    async function submitFeedback(planId) {
+        const input = document.getElementById(`fb-score-${planId}`);
+        const score = Number(input.value);
+        if (input.value === '' || isNaN(score) || score < 0 || score > 100) {
+            showToast('请输入 0-100 的投流得分'); return;
+        }
+        try {
+            const r = await apiFetch('/api/feedback', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({plan_id: planId, score}),
+            });
+            showToast(r.message || '权重已更新', 'ok');
+            input.value = '';
+        } catch (_) {}
+    }
 
     function showAnalysisDetail(idx) {
         const a = historyAnalyses[idx];

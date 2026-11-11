@@ -11,16 +11,14 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import TypedDict, Annotated, Literal
+from typing import TypedDict, Literal
+from pydantic import ValidationError
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 from models import (
-    EditPlanSchema, HookAnalysis, EmotionPoint, FrameDesc,
-    BeatPoint, EditSegment, SessionLocal, MaterialAnalysis, EditPlan,
-    HotRef
+    EditPlanSchema, SessionLocal, MaterialAnalysis, EditPlan,
 )
 from vector_store import get_vector_store
 from video_processor import process_video, extract_frames, analyze_frames_batch
@@ -90,6 +88,7 @@ class WorkflowState(TypedDict):
 
     # 节点3 输出
     plan: dict
+    plan_score: float           # 方案质量分（与 quality_score 检查分分离）
 
     # 质量控制
     quality_score: float
@@ -174,6 +173,7 @@ def node_analyze(state: WorkflowState) -> WorkflowState:
     llm = get_llm()
     chain = ANALYSIS_PROMPT | llm | JsonOutputParser()
 
+    llm_mode = "real"
     try:
         llm_calls.labels("analyze").inc()
         result = chain.invoke({
@@ -185,6 +185,17 @@ def node_analyze(state: WorkflowState) -> WorkflowState:
         llm_errors.labels("analyze").inc()
         logger.warning(f"[节点1] LLM 失败，使用模拟: {e}")
         result = _mock_analysis(asr_text)
+        llm_mode = "mock"
+
+    # 归一化：LLM 偶尔按百分制直觉返回 effectiveness=85 之类，统一压回 0-1，
+    # 保证 quality_check 的 0.5 阈值与前端展示语义稳定
+    hook = result.get("hook_analysis", {})
+    try:
+        eff = float(hook.get("effectiveness", 0))
+        if eff > 1:
+            hook["effectiveness"] = eff / 100
+    except (TypeError, ValueError):
+        hook["effectiveness"] = 0
 
     # 存 DB
     db = SessionLocal()
@@ -209,7 +220,8 @@ def node_analyze(state: WorkflowState) -> WorkflowState:
         {"category": result.get("category"), "sub_category": result.get("sub_category"),
          "hook_text": result.get("hook_analysis", {}).get("hook_text", ""),
          "key_features": result.get("key_features", []),
-         "emotion_curve_count": len(result.get("emotion_curve", []))},
+         "emotion_curve_count": len(result.get("emotion_curve", [])),
+         "llm_mode": llm_mode},
         duration)
 
     logger.info(f"[节点1] 完成，赛道={result.get('category')}/{result.get('sub_category')}")
@@ -234,6 +246,7 @@ RETRIEVAL_PROMPT = ChatPromptTemplate.from_messages([
     ("user", """赛道：{category}/{sub_category}
 钩子：{hook_text}
 特征：{key_features}
+人工反馈：{human_feedback}
 
 检索结果：
 {retrieved_refs}"""),
@@ -252,6 +265,12 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
     key_features = analysis.get("key_features", [])
 
     query = f"{hook_text} {' '.join(key_features[:3])}"
+
+    # 人工打回的反馈参与检索条件，让重试的检索输入与首次不同
+    human_feedback = state.get("human_feedback", "")
+    if human_feedback:
+        query = f"{query} 人工反馈：{human_feedback}"
+
     vs = get_vector_store()
     retrieved = vs.search(query=query, category=category, sub_category=sub_category, top_k=3)
     if not retrieved:
@@ -260,23 +279,21 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
     llm = get_llm()
     chain = RETRIEVAL_PROMPT | llm | JsonOutputParser()
 
-    # 如果有人工反馈，加入检索条件
-    human_feedback = state.get("human_feedback", "")
-    if human_feedback:
-        query = f"{query} 人工反馈：{human_feedback}"
-
+    llm_mode = "real"
     try:
         llm_calls.labels("retrieve").inc()
         result = chain.invoke({
             "category": category, "sub_category": sub_category,
             "hook_text": hook_text,
             "key_features": json.dumps(key_features, ensure_ascii=False),
+            "human_feedback": human_feedback or "无",
             "retrieved_refs": json.dumps(retrieved, ensure_ascii=False, indent=2),
         })
     except Exception as e:
         llm_errors.labels("retrieve").inc()
         logger.warning(f"[节点2] LLM 失败，使用模拟: {e}")
         result = _mock_retrieval(retrieved)
+        llm_mode = "mock"
 
     result["retrieved_refs"] = retrieved
     duration = (time.time() - t0) * 1000
@@ -285,7 +302,8 @@ def node_retrieve(state: WorkflowState) -> WorkflowState:
         {"query": query, "category": category, "sub_category": sub_category},
         {"matched_count": len(retrieved),
          "retrieved_titles": [r.get("title", "") for r in retrieved],
-         "strategy_summary": result.get("strategy_summary", "")},
+         "strategy_summary": result.get("strategy_summary", ""),
+         "llm_mode": llm_mode},
         duration)
 
     logger.info(f"[节点2] 检索到 {len(retrieved)} 条策略")
@@ -305,8 +323,8 @@ def node_quality_check(state: WorkflowState) -> WorkflowState:
     strategy = state["strategy"]
     retry_count = state.get("retry_count", 0)
 
-    # 评分规则
-    score = 60.0
+    # 评分规则：100 分制纯扣分，零问题 = 100 分直接通过
+    score = 100.0
     issues = []
 
     # 检查分析结果
@@ -344,7 +362,8 @@ def node_quality_check(state: WorkflowState) -> WorkflowState:
     duration = (time.time() - t0) * 1000
     node_latency.labels("quality_check").observe(duration / 1000)
 
-    route = "human_review" if score >= 70 or retry_count >= state.get("max_retries", 2) else "retrieve"
+    route = _route_after_quality_check(score, retry_count, state.get("max_retries", 2),
+                                       state.get("human_approved", False))
     steps = _record_step(state, "quality_check", "质量检查",
         {"retry_count": retry_count, "max_retries": state.get("max_retries", 2)},
         {"score": score, "issues": issues, "route": route},
@@ -356,27 +375,44 @@ def node_quality_check(state: WorkflowState) -> WorkflowState:
     return new_state
 
 
-def route_after_quality(state: WorkflowState) -> Literal["retrieve", "human_review"]:
-    """质量检查后的路由：不合格回溯到检索，合格进入人工审核"""
+def _route_after_quality_check(score: float, retry_count: int, max_retries: int,
+                               auto_mode: bool) -> Literal["retrieve", "human_review", "generate"]:
+    """统一路由决策：
+    - 不合格且未达最大重试 → 回溯检索
+    - 合格或重试耗尽 → 自动模式直达生成（跳过人工审核）；
+      人工介入模式进入 human_review 暂停等待
+    """
+    if score < 70 and retry_count < max_retries:
+        return "retrieve"
+    return "generate" if auto_mode else "human_review"
+
+
+def route_after_quality(state: WorkflowState) -> Literal["retrieve", "human_review", "generate"]:
+    """质量检查后的路由（LangGraph 条件边回调）"""
     score = state.get("quality_score", 0)
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
+    auto_mode = state.get("human_approved", False)  # 自动模式初始化时即为 True
 
-    if score < 70 and retry_count < max_retries:
+    route = _route_after_quality_check(score, retry_count, max_retries, auto_mode)
+
+    if route == "retrieve":
         retry_total.inc()
         logger.warning(f"[路由] 质量不达标({score}<70)，回溯到检索节点，重试 {retry_count + 1}/{max_retries}")
-        return "retrieve"
+    elif score < 70:
+        logger.warning(f"[路由] 质量不达标({score})但已达最大重试次数，{'强制生成' if auto_mode else '强制进入人工审核'}")
     else:
-        if score < 70:
-            logger.warning("[路由] 质量不达标但已达最大重试次数，强制进入人工审核")
-        else:
-            logger.info(f"[路由] 质量达标({score}>=70)，进入人工审核")
-        return "human_review"
+        target = "生成（自动模式跳过审核）" if auto_mode else "人工审核"
+        logger.info(f"[路由] 质量达标({score}>=70)，进入{target}")
+    return route
 
 
 def node_retry_increment(state: WorkflowState) -> WorkflowState:
-    """回溯时递增重试计数"""
-    return {**state, "retry_count": state.get("retry_count", 0) + 1}
+    """回溯时递增重试计数（并留痕到执行步骤）"""
+    old = state.get("retry_count", 0)
+    steps = _record_step(state, "retry_increment", "回溯重试（质量检查未达标）",
+        {"retry_count": old}, {"retry_count": old + 1}, 0)
+    return {**state, "retry_count": old + 1, "steps": steps}
 
 
 # ========== 人工审核节点 ==========
@@ -470,6 +506,7 @@ def node_generate(state: WorkflowState) -> WorkflowState:
     llm = get_llm()
     chain = GENERATION_PROMPT | llm | JsonOutputParser()
 
+    llm_mode = "real"
     try:
         llm_calls.labels("generate").inc()
         result = chain.invoke({
@@ -488,20 +525,37 @@ def node_generate(state: WorkflowState) -> WorkflowState:
             }, ensure_ascii=False),
             "feedback_hint": feedback_hint,
         })
+        # 结构化输出校验：LLM 输出必须符合 EditPlanSchema，不符合则降级 mock
+        try:
+            EditPlanSchema.model_validate(result)
+            result["schema_validated"] = True
+        except ValidationError as ve:
+            llm_errors.labels("generate").inc()
+            logger.warning(f"[节点3] LLM 输出不符合 EditPlanSchema，降级模拟: {ve}")
+            result = _mock_plan(analysis, strategy)
+            llm_mode = "mock"
     except Exception as e:
         llm_errors.labels("generate").inc()
         logger.warning(f"[节点3] LLM 失败，使用模拟: {e}")
         result = _mock_plan(analysis, strategy)
+        llm_mode = "mock"
 
-    # 存 DB
+    # 存 DB（status 区分：人工审核通过 / 人工打回后重生成 / 纯自动模式）
     quality_score = _calc_quality(result)
     db = SessionLocal()
+    need_review = state.get("need_human_review")
+    if need_review and state.get("human_approved"):
+        plan_status = "human_approved"
+    elif need_review:
+        plan_status = "human_rejected"   # 打回后按反馈重检索生成的方案
+    else:
+        plan_status = "auto"
     plan = EditPlan(
         material_id=analysis.get("analysis_id"),
         plan_json=result,
         strategy_refs=[r.get("id") for r in strategy.get("retrieved_refs", [])],
         quality_score=quality_score,
-        status="human_approved" if state.get("human_approved") else "draft",
+        status=plan_status,
     )
     db.add(plan)
     db.commit()
@@ -518,11 +572,13 @@ def node_generate(state: WorkflowState) -> WorkflowState:
          "segment_count": len(result.get("segments", [])),
          "estimated_ctr": result.get("estimated_ctr"),
          "estimated_retention": result.get("estimated_retention"),
-         "quality_score": quality_score},
+         "plan_score": quality_score,
+         "llm_mode": llm_mode},
         duration)
 
     logger.info(f"[节点3] 完成，质量={quality_score}, CTR={result.get('estimated_ctr')}")
-    new_state = {**state, "plan": result, "quality_score": quality_score, "steps": steps, "current_node": "completed", "status": "completed"}
+    # plan_score 与 quality_score（质量检查分）分离，避免字段双语义
+    new_state = {**state, "plan": result, "plan_score": quality_score, "steps": steps, "current_node": "completed", "status": "completed"}
     _log_flow("generate", new_state)
     return new_state
 
@@ -550,10 +606,11 @@ def build_graph():
     # 边：retrieve → quality_check
     graph.add_edge("retrieve", "quality_check")
 
-    # 条件边：quality_check → retrieve（回溯）或 human_review
+    # 条件边：quality_check → retrieve（回溯）/ human_review（介入模式）/ generate（自动模式）
     graph.add_conditional_edges("quality_check", route_after_quality, {
         "retrieve": "retry_increment",
         "human_review": "human_review",
+        "generate": "generate",
     })
 
     # 边：retry_increment → retrieve（回溯重试）
@@ -598,11 +655,12 @@ def run_workflow(asr_text: str, filename: str, frame_descriptions: list = None,
         "analysis": {},
         "strategy": {},
         "plan": {},
+        "plan_score": 0,
         "quality_score": 0,
         "retry_count": 0,
         "max_retries": 2,
         "human_feedback": "",
-        "human_approved": True,    # 自动模式默认通过
+        "human_approved": True,    # 自动模式默认通过，质量达标后跳过人工审核
         "need_human_review": False,
         "current_node": "",
         "status": "running",
@@ -616,14 +674,21 @@ def run_workflow(asr_text: str, filename: str, frame_descriptions: list = None,
         "strategy": final_state.get("strategy", {}),
         "plan": final_state.get("plan", {}),
         "quality_score": final_state.get("quality_score", 0),
+        "plan_score": final_state.get("plan_score", 0),
         "retry_count": final_state.get("retry_count", 0),
         "steps": final_state.get("steps", []),
     }
 
 
 def run_workflow_with_interrupt(asr_text: str, filename: str,
-                                frame_descriptions: list = None) -> dict:
+                                frame_descriptions: list = None,
+                                video_path: str = None) -> dict:
     """运行工作流到人工审核点后暂停，返回中间状态"""
+    if video_path and os.path.exists(video_path):
+        video_result = process_video(video_path, asr_text)
+        asr_text = video_result["asr_text"]
+        frame_descriptions = video_result["frame_descriptions"]
+
     initial_state: WorkflowState = {
         "asr_text": asr_text,
         "filename": filename,
@@ -631,6 +696,7 @@ def run_workflow_with_interrupt(asr_text: str, filename: str,
         "analysis": {},
         "strategy": {},
         "plan": {},
+        "plan_score": 0,
         "quality_score": 0,
         "retry_count": 0,
         "max_retries": 2,
@@ -644,10 +710,14 @@ def run_workflow_with_interrupt(asr_text: str, filename: str,
 
     app = get_app()
     # 用 stream 执行，在 human_review 节点暂停
+    # （说明：非 LangGraph 原生 interrupt/checkpointer 机制，而是检测到
+    #   human_review 节点输出 paused 状态后丢弃 stream 提前返回实现暂停）
     events = {}
+    seq = 0
     for event in app.stream(initial_state):
         for node, output in event.items():
-            events[node] = output
+            seq += 1
+            events[f"{node}#{seq}"] = output   # 带序号 key，回溯重复执行不互相覆盖
             logger.info(f"[执行] 节点 {node} 完成")
             # 在 human_review 节点暂停
             if node == "human_review" and output.get("status") == "paused":
@@ -660,7 +730,7 @@ def run_workflow_with_interrupt(asr_text: str, filename: str,
                 }
 
     # 如果没暂停就完成了
-    final = events.get("generate", {})
+    final = events.get(f"generate#{seq}", {})
     return {
         "status": "completed",
         "state": final,
@@ -698,6 +768,7 @@ def resume_workflow(state: WorkflowState, approved: bool, feedback: str = "") ->
         "strategy": result_state.get("strategy", {}),
         "plan": plan,
         "quality_score": result_state.get("quality_score", 0),
+        "plan_score": result_state.get("plan_score", 0),
         "retry_count": result_state.get("retry_count", 0),
         "steps": result_state.get("steps", []),
     }
@@ -779,11 +850,19 @@ def _mock_plan(analysis, strategy):
     }
 
 
+def _to_float(v, default=0.0) -> float:
+    """LLM 可能返回 '4.8%' 之类的字符串，统一安全转 float"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _calc_quality(plan):
     score = 60.0
     segments = plan.get("segments", [])
     if len(segments) >= 4: score += 10
-    if plan.get("hook_analysis", {}).get("effectiveness", 0) > 0.7: score += 10
+    if _to_float(plan.get("hook_analysis", {}).get("effectiveness")) > 0.7: score += 10
     if len(plan.get("beat_points", [])) >= 3: score += 10
-    if plan.get("estimated_ctr", 0) > 0.04: score += 10
+    if _to_float(plan.get("estimated_ctr")) > 0.04: score += 10
     return min(score, 100)

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   prometheus:
     image: prom/prometheus:latest
@@ -20,6 +18,9 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_DEFAULT_LANGUAGE=zh-Hans
     volumes:
+      # provisioning：数据源与 dashboard 自动加载（仅挂 JSON 到 dashboards 目录不会生效）
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
       - ./grafana_dashboard.json:/var/lib/grafana/dashboards/dashboard.json
     depends_on:
       - prometheus

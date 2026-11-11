@@ -1,5 +1,31 @@
 # Prometheus + Grafana 完整指南
 
+## 零、5 分钟快速上手
+
+```
+1. 启动应用
+   uvicorn main:app --host 0.0.0.0 --port 8080
+   → 浏览器打开 http://localhost:8080/metrics，能看到指标文本即正常
+
+2. 启动监控栈
+   docker compose up -d
+   → 拉起 Prometheus(9090) 和 Grafana(3000) 两个容器
+
+3. 验证采集
+   打开 http://localhost:9090/targets
+   → drama-agent 目标状态为 UP（Prometheus 每 15 秒抓取成功）
+
+4. 验证 Grafana 自动加载
+   打开 http://localhost:3000（用户名 admin / 密码 admin）
+   → 左侧 Dashboards 里「短剧 Agent 监控面板」已自动出现
+   → 数据源 Prometheus 也已自动配置（靠 provisioning，见第七节）
+   → 全程无需在 UI 里手动添加数据源、手动 Import JSON
+
+5. 制造数据看曲线
+   在前端页面发起几次分析（或 curl -X POST http://localhost:8080/api/analyze ...）
+   → 等 30 秒左右回 Grafana，HTTP QPS / 节点耗时等曲线出现
+```
+
 ## 一、整体架构
 
 ```
@@ -31,7 +57,8 @@
 | Prometheus | 定时抓取 + 存储 + 查询 | 时序数据库 | localhost:9090 |
 | prometheus.yml | 配置抓取目标和间隔 | YAML | 项目目录 |
 | Grafana | 可视化展示 | Web UI | localhost:3000 |
-| Dashboard JSON | 面板配置 | JSON | 项目目录 |
+| Grafana provisioning | 启动时自动导入数据源和 dashboard | YAML | grafana/provisioning/ |
+| Dashboard JSON | 面板配置 | JSON | 项目目录（挂载到容器内 /var/lib/grafana/dashboards/） |
 
 ## 三、数据流全链路
 
@@ -39,17 +66,18 @@
 
 ```python
 # metrics.py — 定义指标（注册到 prometheus_client 全局 registry）
-http_requests = Counter("http_requests_total", "HTTP 请求总数", ["method", "path"])
+http_requests = Counter("http_requests_total", "HTTP 请求总数", ["method", "path", "status"])
 
-# main.py 中间件 — 每次请求自动更新
-http_requests.labels("POST", "/api/analyze").inc()
+# main.py 的 metrics_middleware — 每次请求自动更新
+http_requests.labels("POST", "/api/analyze", "200").inc()
+http_latency.labels("POST", "/api/analyze").observe(0.42)
 node_latency.labels("analyze").observe(1.5)
 ```
 
 ```
 指标值存在 Python 进程内存中:
   registry = {
-    "http_requests_total{method=POST,path=/api/analyze}": 5,
+    "http_requests_total{method=POST,path=/api/analyze,status=200}": 5,
     "workflow_node_duration_seconds_sum{node=analyze}": 3.2,
     "faiss_index_size": 6,
   }
@@ -71,7 +99,7 @@ app.mount("/metrics", metrics_app) # 挂载到 /metrics 路径
 
 # HELP http_requests_total HTTP 请求总数
 # TYPE http_requests_total counter
-http_requests_total{method="POST",path="/api/analyze"} 5.0
+http_requests_total{method="POST",path="/api/analyze",status="200"} 5.0
 
 # HELP faiss_index_size FAISS 向量库大小
 # TYPE faiss_index_size gauge
@@ -112,7 +140,7 @@ Prometheus 每 15 秒:
 时序数据模型:
   指标名{标签} → [(时间戳1, 值1), (时间戳2, 值2), ...]
 
-  http_requests_total{method="POST", path="/api/analyze"}:
+  http_requests_total{method="POST", path="/api/analyze", status="200"}:
     (T+0s,  0)    ← 初始值
     (T+15s, 3)    ← 第 1 次采集
     (T+30s, 7)    ← 第 2 次采集
@@ -165,14 +193,14 @@ Grafana 每 10 秒:
 ### 4.1 Counter（计数器）
 
 ```python
-http_requests = Counter("http_requests_total", "HTTP 请求总数", ["method", "path"])
+http_requests = Counter("http_requests_total", "HTTP 请求总数", ["method", "path", "status"])
 ```
 
 ```
 特点: 只增不减，重启归零
 用途: 统计请求次数、错误次数、调用次数
 
-http_requests_total{method="GET", path="/api/analyze"}
+http_requests_total{method="GET", path="/api/analyze", status="200"}
   t=0: 0
   t=1: 3    ← .inc()
   t=2: 7    ← .inc()
@@ -241,6 +269,7 @@ Dashboard JSON 不包含任何数据！
   - 刷新间隔（10 秒）
   - 时间范围（最近 30 分钟）
 
+加载方式 = provisioning 自动加载（见第七节），启动即生效，无需手动 Import
 导入 JSON = 告诉 Grafana "怎么画图"
 数据来源 = Grafana 实时向 Prometheus 查询
 ```
@@ -272,11 +301,22 @@ Grafana 查 "过去 30 分钟":
 docker-compose.yml
   ├─ 启动 Prometheus 容器
   │    └─ 挂载 prometheus.yml → /etc/prometheus/prometheus.yml
-  └─ 启动 Grafana 容器
-       └─ 挂载 grafana_dashboard.json → /var/lib/grafana/dashboards/
+  └─ 启动 Grafana 容器（三条挂载，缺一不可）
+       ├─ 挂载 grafana/provisioning/datasources → /etc/grafana/provisioning/datasources
+       │    └─ 数据源自动导入：创建 Prometheus 数据源，url 指向 http://prometheus:9090
+       ├─ 挂载 grafana/provisioning/dashboards → /etc/grafana/provisioning/dashboards
+       │    └─ 声明 dashboard provider：扫描 /var/lib/grafana/dashboards 目录
+       └─ 挂载 grafana_dashboard.json → /var/lib/grafana/dashboards/dashboard.json
+            └─ 面板配置本体（10 个图表），被 provider 自动发现并加载
 
 prometheus.yml
   └─ 告诉 Prometheus: scrape_interval=15s, targets=["host.docker.internal:8080"]
+
+grafana/provisioning/datasources/prometheus.yml
+  └─ 告诉 Grafana: 默认数据源是 Prometheus，地址 http://prometheus:9090（容器内网络）
+
+grafana/provisioning/dashboards/dashboards.yml
+  └─ 告诉 Grafana: 用 file provider 从 /var/lib/grafana/dashboards 自动加载 dashboard
 
 grafana_dashboard.json
   └─ 告诉 Grafana: 10 个面板，每个面板的 PromQL 查询和图表类型
@@ -286,6 +326,36 @@ metrics.py
 
 各业务模块
   └─ 调用 .inc() / .observe() 更新指标值
+```
+
+### Grafana provisioning 机制
+
+```
+provisioning = Grafana 的"声明式配置"：
+把数据源和 dashboard 写成 YAML/JSON 文件放进约定目录，
+Grafana 启动时自动读取加载，无需在 Web UI 里手动操作。
+
+容器内 /etc/grafana/provisioning/ 下两个目录各司其职:
+
+  datasources/   ← 数据源定义（本项目: prometheus.yml）
+      Grafana 启动时逐个读取，自动创建数据源
+      本项目创建的 Prometheus 数据源指向 http://prometheus:9090
+      （Docker 内部网络地址，见第八节）
+
+  dashboards/    ← dashboard provider 声明（本项目: dashboards.yml）
+      声明 type=file, path=/var/lib/grafana/dashboards, 每 30 秒扫描
+      Grafana 据此知道"去哪个目录找面板 JSON"
+
+关键点（常见坑）:
+  只把 dashboard JSON 挂到 /var/lib/grafana/dashboards/ 是【不够】的——
+  没有任何组件会主动扫描那个目录，必须同时挂载 dashboards.yml 声明
+  provider，Grafana 才会去加载它。同理，没有 datasources 配置时面板
+  会因找不到数据源而无法出图。
+
+  三条链路各司其职:
+    datasources 配置   → 定义"查谁"（数据源）
+    dashboards 配置    → 定义"去哪找面板"（provider）
+    dashboard.json     → 面板本体（画什么、怎么画）
 ```
 
 ## 八、端口和地址

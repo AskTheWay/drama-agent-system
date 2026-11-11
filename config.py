@@ -16,9 +16,20 @@ def _load_env():
         with open(ENV_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip())
+                # 跳过注释/空行，支持 export 前缀与行内注释
+                if line.startswith("export "):
+                    line = line[7:]
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                value = value.strip()
+                # 剥离成对引号：KEY="abc" / KEY='abc'
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                pos = value.find(" #")
+                if pos != -1:
+                    value = value[:pos].strip()
+                os.environ.setdefault(key.strip(), value)
 
 
 _load_env()

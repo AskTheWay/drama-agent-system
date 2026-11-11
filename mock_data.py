@@ -149,7 +149,7 @@ HOT_REFERENCES = [
         "asr_text": "岳母把我的行李扔出门外，骂我是废物。我没有说话，只是默默拨通了一个号码。三分钟后，一架直升机降落在小区广场...",
         "frame_descriptions": [
             {"timestamp": "0s", "scene": "家门口", "action": "行李被扔", "visual_hook": "手持晃动感"},
-            {"timestamp": "8s", "scene": "小区广场", "action": "直升机降落", "visual-hook": "航拍+慢动作"},
+            {"timestamp": "8s", "scene": "小区广场", "action": "直升机降落", "visual_hook": "航拍+慢动作"},
         ],
     },
     {

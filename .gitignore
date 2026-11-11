@@ -10,15 +10,20 @@ data/*.meta
 
 # 日志
 data/*.log
+data/frames/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+venv/
+.pytest_cache/
 
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # 系统文件
 .DS_Store

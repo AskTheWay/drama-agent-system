@@ -45,10 +45,10 @@ Agent 工作流:
 │ 输出:            │              │ - key_features   │          │ 输出:            │
 │ - hook_analysis  │              │                  │          │ - segments[]     │
 │ - emotion_curve  │              │ 输出:            │          │ - beat_points[]  │
-│ - category       │              │ - matched_refs   │          │ - emotion_curve  │
-│ - sub_category   │              │ - strategy_summary│         │ - estimated_ctr  │
-│ - key_features   │              │ - key_learnings  │          │ - conversion_hook│
-│ - beat_points    │              │                  │          │                  │
+│ - category       │              │ - matched_strategies│       │ - emotion_curve  │
+│ - sub_category   │              │ - retrieved_refs │          │ - estimated_ctr  │
+│ - key_features   │              │ - strategy_summary│         │ - conversion_hook│
+│ - beat_points    │              │ - key_learnings  │          │                  │
 └──────────────────┘              └──────────────────┘          └──────────────────┘
 ```
 
@@ -81,13 +81,13 @@ Agent 工作流:
 
 LangChain 的 LCEL（LangChain Expression Language）适合简单的线性链：`prompt | llm | parser`。但本系统需要：
 
-1. **条件分支**: 质量检查后需要决定"回溯重试"还是"进入审核"，LCEL 的 `|` 管道符只能线性传递，无法做条件路由。
+1. **条件分支**: 质量检查后需要决定"回溯重试"、"进入人工审核"还是"直接生成"，LCEL 的 `|` 管道符只能线性传递，无法做条件路由。
 
 2. **回溯（Backtracking）**: 质量不达标时需要跳回前面的节点重新执行，LCEL 不支持反向跳转。
 
 3. **状态管理**: LangGraph 的 `TypedDict` 状态在所有节点间共享，任何节点都能读写。LCEL 每一步只能拿到上一步的输出。
 
-4. **人工介入（Human-in-the-Loop）**: LangGraph 原生支持 `interrupt` 机制，可以在某个节点暂停等待外部输入。
+4. **人工介入（Human-in-the-Loop）**: LangGraph 原生支持 `interrupt` + checkpointer 机制，可以在某个节点暂停、持久化状态并等待外部输入。本 demo 用的是简化实现（stream 迭代检测暂停 + 手工恢复，见 Q6），原生机制是升级方向。
 
 LangGraph 的 `StateGraph` + `add_conditional_edges` 天然支持这些场景：
 
@@ -95,7 +95,8 @@ LangGraph 的 `StateGraph` + `add_conditional_edges` 天然支持这些场景：
 graph = StateGraph(WorkflowState)
 graph.add_conditional_edges("quality_check", route_after_quality, {
     "retrieve": "retry_increment",    # 回溯
-    "human_review": "human_review",   # 进入审核
+    "human_review": "human_review",   # 人工介入模式 → 暂停审核
+    "generate": "generate",           # 自动模式质量达标 → 跳过审核直达生成
 })
 graph.add_conditional_edges("human_review", route_after_human, {
     "generate": "generate",   # 通过
@@ -112,13 +113,14 @@ graph.add_conditional_edges("human_review", route_after_human, {
 回溯的核心是**条件边（conditional edges）+ 状态持久化**。
 
 ```
-quality_check 节点
+quality_check 节点（100 分制纯扣分）
     │
-    ├─ score >= 70 → human_review（继续）
+    ├─ score < 70 且 retry_count < max_retries
+    │        → retry_increment → retrieve（回溯，retry_count + 1）
     │
-    └─ score < 70 → retry_increment → retrieve（回溯）
-                           │
-                           └─ retry_count + 1
+    └─ score >= 70 或重试耗尽
+             ├─ 自动模式（run_workflow）→ generate（跳过人工审核直达生成）
+             └─ 人工介入模式（run_workflow_with_interrupt）→ human_review（暂停等待）
 ```
 
 关键设计：
@@ -132,14 +134,15 @@ def route_after_quality(state):
     score = state.get("quality_score", 0)
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
+    auto_mode = state.get("human_approved", False)  # 自动模式初始化时即为 True
 
     if score < 70 and retry_count < max_retries:
         return "retrieve"      # 回溯
-    else:
-        return "human_review"  # 无论是否达标，都进入人工审核
+    # 达标或重试耗尽：自动模式直达生成（跳过审核），人工介入模式暂停等待
+    return "generate" if auto_mode else "human_review"
 ```
 
-4. **每次回溯会重新执行检索**: 因为 `retrieve` 节点会重新调用 RAG 和 LLM，可能得到不同的结果
+4. **每次回溯会重新执行检索**: 因为 `retrieve` 节点会重新调用 RAG 和 LLM，可能得到不同的结果（人工打回时反馈还会拼接进检索 query，见 Q6）
 
 ---
 
@@ -147,7 +150,7 @@ def route_after_quality(state):
 
 **回答**:
 
-利用 LangGraph 的状态图执行机制，在 `human_review` 节点暂停：
+在 `human_review` 节点暂停。注意暂停是简化实现：迭代 `app.stream()` 的输出事件，检测到 human_review 节点输出 paused 状态后丢弃 stream 提前返回，**并非 LangGraph 原生 interrupt/checkpointer 机制**：
 
 ```python
 def node_human_review(state):
@@ -166,10 +169,21 @@ def run_workflow_with_interrupt(asr_text, filename):
 def resume_workflow(state, approved, feedback):
     state["human_approved"] = approved
     state["human_feedback"] = feedback
-    return app.invoke(state)  # 从暂停点继续执行
+
+    if approved:
+        # 通过 → 直接执行生成节点
+        result_state = node_generate(state)
+    else:
+        # 打回 → 重新检索 → 质量检查 → 生成
+        state = node_retrieve(state)
+        state = node_quality_check(state)
+        result_state = node_generate(state)
+    return result_state
 ```
 
-**打回时的改进**: 如果用户打回并给出反馈（如"钩子不够强"），反馈会注入到 `retrieve` 节点的查询条件中，影响重新检索的结果。
+注意 `resume_workflow` **不重新运行整个图**（不是再 `app.invoke` 一遍），而是从暂停时的状态直接顺序调用后续节点：通过则只执行 `node_generate`；打回则执行 `retry_count+1 → node_retrieve（反馈拼入检索 query）→ node_quality_check → node_generate`。这样做的原因：节点1（analyze）的分析结果不受人工反馈影响，重跑只会重复消耗 MLLM/ASR 调用；同时保留暂停前已积累的 steps 执行日志与人工审核上下文。
+
+**打回时的改进**: 如果用户打回并给出反馈（如"钩子不够强"），反馈会拼接到 `retrieve` 节点检索 query 的末尾（"人工反馈：..."），使重试的检索输入与首次不同；`RETRIEVAL_PROMPT` 中也有对应的 `{human_feedback}` 变量，反馈会同时影响策略总结的生成。
 
 ---
 
@@ -177,7 +191,7 @@ def resume_workflow(state, approved, feedback):
 
 **回答**:
 
-评分规则（满分100，基础60分）：
+评分规则（**100 分制纯扣分**：零问题 = 100 分直接通过，每发现一个问题扣对应分数，最低 0 分）：
 
 | 检查项 | 条件 | 扣分 |
 |--------|------|------|
@@ -188,7 +202,7 @@ def resume_workflow(state, approved, feedback):
 | 策略总结 | 为空 | -10 |
 
 阈值 70 的选择：
-- **低于 70** 意味着至少有 2 个以上的问题（如赛道未判断 + 无匹配策略 = -40，得分 20）
+- **低于 70** 意味着至少有 2 个以上的问题（如赛道未判断 + 无匹配策略 = -40，得分 60）
 - 这些问题会严重影响最终方案质量，必须重新检索
 - 70 是一个平衡点：不会因为小问题就回溯（避免浪费时间），但关键问题必须修复
 
@@ -227,6 +241,11 @@ Qwen-VL-Plus 支持图片输入，每帧发送一张图片 + 分析指令，返�
 
 为什么不一次性送所有帧？因为多张图片拼接会降低每帧的分析精度，逐帧分析虽然慢但质量更高。
 
+**这条链路的触发方式**（学习演示用，前端不直接上传视频文件）：
+- 调用 `POST /api/analyze` 时传可选的 `video_path` 字段（**服务器本地**视频路径），`run_workflow` 检测到文件存在即先执行 `process_video` 再进入工作流；
+- 或在代码中直接调用 `run_workflow(video_path=...)`；
+- 不传 `video_path` 时只走 ASR 文本 + 模拟帧描述，不会触发抽帧/Whisper/Qwen-VL 真实链路。
+
 ---
 
 ### Q9: 30+ 维度数据具体包括哪些？怎么提取的？
@@ -259,7 +278,7 @@ Qwen-VL-Plus 支持图片输入，每帧发送一张图片 + 分析指令，返�
 21-25. 画面亮度曲线、色彩饱和度、对比度、锐度、模糊度
 26-30. 3秒停留率、完播率、CTR、转化率、互动率
 
-当前 demo 实现了前 15 个维度，后 15 个需要接入音视频分析工具和投流平台数据 API。
+当前 demo 实际实现的维度分两块：**画面侧 MLLM 逐帧提取 6 个维度**（scene / action / visual_hook / emotion / composition / color_tone，见 `analyze_frame_with_mllm`）；**ASR 文本侧**由节点1 的 LLM 综合提取钩子分析（文案/类型/效果预估/时间点）、情绪曲线、关键特征、赛道/题材、音画卡点等若干维度。上表中的镜头运动、音频节拍、投流效果指标等维度需要接入音视频分析工具和投流平台数据 API，demo 未实现。
 
 ---
 
@@ -343,8 +362,8 @@ FAISS 常用索引类型：
 
 | 索引类型 | 原理 | 速度 | 精度 | 内存 | 适用场景 |
 |----------|------|------|------|------|---------|
-| IndexFlatIP | 暴力搜索，逐一计算内积 | 最慢 | 最精确 | 低 | 小数据集（<10万） |
-| IndexIVFFlat | 倒排索引，先聚类再搜索 | 快 | 高 | 中 | 中等数据集（百万级） |
+| IndexFlatIP | 暴力搜索，逐一计算内积 | 最慢 | 最精确 | 高（全量原始向量常驻） | 小数据集（<10万） |
+| IndexIVFFlat | 倒排索引，先聚类再搜索 | 快 | 高 | 高（全量向量+倒排，只多不少） | 中等数据集（百万级） |
 | IndexIVFPQ | 倒排+乘积量化 | 最快 | 有损 | 最低 | 大数据集（亿级） |
 | IndexHNSW | 图索引 | 很快 | 很高 | 高 | 高召回率场景 |
 
@@ -367,7 +386,7 @@ FAISS 常用索引类型：
 |------|------|------|------|
 | JSON Mode | 在 Prompt 中要求返回 JSON，模型按指令生成 | 通用，不依赖模型特性 | 不保证格式合法 |
 | Function Calling | 模型原生支持工具调用，返回结构化参数 | 格式有保证 | 需要模型支持 |
-| JsonOutputParser | LangChain 包装，解析+重试 | 自动重试修复 | 依赖底层模型 |
+| JsonOutputParser | LangChain 包装，从输出提取 JSON（含 markdown 代码块容错） | 解析容错 | 依赖底层模型 |
 
 当前系统用的是 **LangChain 的 JsonOutputParser**，它的工作方式：
 1. 在 Prompt 中嵌入 JSON Schema 要求
@@ -391,9 +410,10 @@ result = chain.invoke({...})  # 返回 dict，不是文本
 多层防御：
 
 1. **Prompt 层**: 在系统 Prompt 中明确列出完整的 JSON Schema，包含每个字段的类型和说明
-2. **Parser 层**: JsonOutputParser 解析失败时自动重试（最多 2 次）
-3. **兜底层**: 重试仍失败则调用 `_mock_plan()` 返回预设数据
-4. **后处理**: 对返回的 dict 做字段补全
+2. **Parser 层**: JsonOutputParser 从 LLM 输出提取 JSON（含 markdown 代码块容错）；解析失败不做自动重试，直接走下一层兜底
+3. **Schema 校验层**: 节点3（`node_generate`）对 LLM 输出执行 Pydantic `EditPlanSchema.model_validate()` 严格校验
+4. **兜底层**: LLM 调用失败或校验不通过则降级 `_mock_plan()` 返回预设数据
+5. **后处理**: 对返回的 dict 做字段补全
 
 ```python
 # 后处理示例
@@ -403,7 +423,7 @@ plan.setdefault("estimated_ctr", 0)
 plan.setdefault("estimated_retention", 0)
 ```
 
-当前 demo 依赖 LLM 的遵循能力，生产环境可以用 Pydantic 的 `model_validate()` 做严格校验，不合法直接拒绝重试。
+Schema 校验层现在已经真正生效：`EditPlanSchema.model_validate()` 校验失败会降级为 mock 方案并在 steps 里留痕（llm_mode=mock，前端显示"兜底演示数据"徽章）。生产环境的进一步改进是校验失败时携带 ValidationError 信息重新调用 LLM 修复，而不是直接降级。
 
 ---
 
@@ -523,7 +543,7 @@ engine = create_engine("postgresql://user:pass@localhost:5432/drama_agent")
 |----------------|------|---------|
 | ChatOpenAI | LLM 调用（mimo） | agent_workflow.py |
 | ChatPromptTemplate | 管理系统/用户 Prompt | 三个节点的 Prompt |
-| JsonOutputParser | 强制 JSON 输出 + 自动重试 | 三个节点的 chain |
+| JsonOutputParser | 从 LLM 输出提取 JSON | 三个节点的 chain |
 | `\|` 管道操作符 | 组合 Prompt → LLM → Parser | `chain = prompt \| llm \| parser` |
 
 ```python
@@ -534,7 +554,7 @@ result = chain.invoke({"filename": "...", "asr_text": "...", "frame_descriptions
 
 其实这个项目用 LangChain 的部分不多，核心就是 PromptTemplate + JsonOutputParser。如果不用 LangChain，直接调 OpenAI API + 手动解析 JSON 也能实现，但 LangChain 的好处是：
 1. 统一接口，换模型只改 ChatOpenAI 的参数
-2. JsonOutputParser 自带重试逻辑
+2. JsonOutputParser 对 markdown 代码块包裹的输出有解析容错
 3. Prompt 模板化，方便 A/B 测试
 
 ---
@@ -555,10 +575,10 @@ LLM 生成 JSON 有天然的不确定性：
 
 我用三层防御解决：
 1. **Prompt 工程**: 精确描述 Schema，明确要求"只返回 JSON，不要其他文字"
-2. **Parser 兜底**: JsonOutputParser 自动提取 JSON 子串 + 重试
+2. **Parser 兜底**: JsonOutputParser 容错提取 JSON 子串，失败不重试、直接降级 _mock_*() 并在 steps 标注 llm_mode=mock（前端可见）
 3. **后处理校验**: Pydantic model_validate + 字段补全
 
-目前的稳定性大约 95%（20 次调用有 1 次需要重试）。如果要更高稳定性，可以：
+体感稳定性较高（绝大多数调用一次成功，偶发需要重试；未做系统化统计，无精确比例可引用）。如果要更高稳定性，可以：
 - 用 Function Calling / Tool Use（模型原生支持结构化输出）
 - 用 constrained decoding（如 Outlines 库，强制模型输出符合 Schema 的 token）
 
@@ -583,20 +603,19 @@ LLM 生成 JSON 有天然的不确定性：
 
 **回答**:
 
-验证方法是 A/B 测试：
+先说结论：本系统是学习项目，**没有接入真实投流平台，也没有实测 A/B 数据**。面试时应表述为"设计了验证方案 + 机制层面的效率收益"，不能引用具体效果数字。
+
+A/B 验证的设计方案：
 
 1. **对照组**: 运营人工拆解素材，手动写剪辑方案
 2. **实验组**: Agent 系统自动生成剪辑方案
 3. **投放**: 两组方案在同一天、同一时段、同一受众条件下投放
-4. **对比指标**:
-   - 3秒停留率: Agent 83% vs 人工 78%
-   - CTR: Agent 4.8% vs 人工 4.2%
-   - 完播率: Agent 35% vs 人工 30%
+4. **对比指标**: 3秒停留率、CTR、完播率——效果数据通过 `/api/feedback` 回传（score 0-100），数据飞轮更新策略权重
 
-"80% 效率提升"的计算方式：
+效率收益的估算口径（机制推算，非实测）：
 - 人工拆解一条素材: 约 2 小时（看视频 + 标注 + 写方案）
-- Agent 处理: 约 3 分钟（API 调用时间）
-- 效率提升: (120 - 3) / 120 ≈ 97%，保守说 80%
+- Agent 处理: 纯文本链路秒级返回；真实多模态链路耗时主要是 MLLM 逐帧分析（30 帧约 30-60 秒 API 调用）
+- 方案中的 estimated_ctr / estimated_retention 是 LLM 生成的预估值，仅用于方案内部对比，不代表实测投放效果
 
 ---
 
@@ -610,7 +629,7 @@ LLM 生成 JSON 有天然的不确定性：
 节点1 LLM 不可用 → _mock_analysis() 返回预设分析结果
 节点2 LLM 不可用 → _mock_retrieval() 返回预设策略总结
 节点3 LLM 不可用 → _mock_plan() 返回预设剪辑方案（5个标准片段）
-Embedding 不可用 → 随机向量（检索结果不精准但不报错）
+Embedding 不可用 → 降级随机向量构建（检索结果不精准但不报错；降级索引不持久化，避免随机向量污染真实索引，API 恢复重启后自动重建）
 MLLM 不可用 → _mock_frame_desc() 返回模拟帧描述
 Whisper 不可用 → _mock_asr() 返回模拟 ASR 文本
 ```
@@ -633,7 +652,9 @@ Whisper 不可用 → _mock_asr() 返回模拟 ASR 文本
 
 4. **多轮迭代**: 当前是单次生成。可以加入"自评 + 优化"循环：生成方案 → LLM 自评质量 → 不合格则重新生成。
 
-5. **人工校准节点**: 在节点2和节点3之间加一个人工审核节点，运营可以修改策略选择后再生成方案。
+5. **升级为 LangGraph 原生 interrupt + checkpointer**: 当前的暂停/恢复是简化实现（`run_workflow_with_interrupt` 迭代 stream 检测 paused 提前返回、`resume_workflow` 手工调用后续节点），用原生机制可获得状态持久化、断点恢复、多会话审核等能力。
+
+6. **视频文件上传接口**: 当前多模态链路只能通过服务器本地 `video_path` 触发（见 Q8），补一个上传接口（分片上传 + 对象存储）才能让前端用户直接提交视频。
 
 ---
 
@@ -641,22 +662,24 @@ Whisper 不可用 → _mock_asr() 返回模拟 ASR 文本
 
 **回答**:
 
-**效率提升**: 素材拆解+方案生成从 2 小时/条降到 3 分钟/条，效率提升 80%+
+如实回答：本系统是学习项目，**没有真实上线，也没有实测业务数据**。面试时主动说明这一点，再讲机制层面的价值，比引用编造的数字更加分。
 
-**质量指标**: Agent 生成的方案在核心指标上达到赛道均值：
-- 3秒停留率: 83%（赛道均值 78%）
-- CTR: 4.8%（赛道均值 4.2%）
-- 完播率: 35%（赛道均值 30%）
+**效率（机制推算）**:
+- 人工拆解一条素材约 2 小时；Agent 纯文本链路秒级返回，真实多模态链路耗时主要在 MLLM 逐帧分析（30 帧约 30-60 秒）
+- 人工介入模式下运营从"写方案"变成"审方案"（审核面板通过/打回即可），自动模式则全程无人值守
 
-**业务价值**:
-- 运营团队从"写方案"变成"审方案"，人效提升 3 倍
-- 爆款策略可复用，新素材不再从零开始
-- 数据飞轮让知识库越来越准，系统越用越好
+**效果数据的现状**:
+- 方案中的 estimated_ctr / estimated_retention 是 LLM 生成的预估字段，不是实测投放结果
+- 若接入真实平台，效果数据经 `/api/feedback` 回传（score 0-100 加权更新策略分），数据飞轮驱动"高分策略优先被召回"
 
-**技术壁垒**:
-- 多维度知识库（30+维度 × 万级素材）是核心资产
-- 数据飞轮形成正循环，竞品难以复制
-- 混合检索确保策略与素材高度同源
+**机制层面的价值**:
+- 爆款策略沉淀为结构化知识库（赛道/钩子/情绪曲线等维度），新素材不再从零开始
+- 数据飞轮闭环（DB 分数更新 → 检索元数据同步落盘）让知识库随投放效果自动进化
+- 双模 RAG（元数据硬过滤 + 向量语义匹配）确保策略与素材赛道同源
+
+**可讲的壁垒（机制设计，非数据规模）**:
+- 维度化知识库结构 + 检索权重与投放效果联动的设计
+- 人工反馈回流检索（打回反馈拼接进 query）形成的人在回路学习
 
 ---
 
@@ -668,10 +691,10 @@ Whisper 不可用 → _mock_asr() 返回模拟 ASR 文本
 | 用的什么模型？ | LLM 用 mimo，多模态用 Qwen-VL，Embedding 用阿里云 text-embedding-v3 |
 | 向量数据库是什么？ | FAISS（算法库），不是数据库。生产用 Milvus |
 | 有回溯吗？ | 有，quality_check < 70 分时回溯到 retrieve 节点，最多重试 2 次 |
-| 有人工介入吗？ | 有，human_review 节点支持 interrupt/resume，前端有审核面板 |
+| 有人工介入吗？ | 有，人工介入模式在 human_review 节点暂停（stream 检测实现），/api/resume 恢复；自动模式质量达标后跳过审核直达生成 |
 | 前端什么技术？ | Bootstrap 5 + 原生 JS，单页应用 |
 | 数据库用什么？ | demo 用 SQLite，生产用 PostgreSQL |
-| 一共多少行代码？ | 后端约 900 行 Python，前端约 700 行 HTML/JS |
+| 一共多少行代码？ | 后端约 2000 行 Python，前端约 1200 行 HTML/JS |
 | 部署方式？ | 单机 FastAPI，生产用 Docker + K8s |
-| 支持哪些视频格式？ | OpenCV 支持的所有格式（mp4/avi/mov 等） |
-| 一条素材处理多久？ | 约 3 分钟（主要是 MLLM 帧分析耗时） |
+| 支持哪些视频格式？ | 格式跟随 OpenCV（mp4/avi/mov 等）；需在 /api/analyze 传 video_path（服务器本地路径）触发多模态链路，前端不直接上传视频 |
+| 一条素材处理多久？ | 纯文本链路秒级；真实多模态链路主要耗时在 MLLM 逐帧分析（30 帧约 30-60 秒） |

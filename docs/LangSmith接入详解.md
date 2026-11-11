@@ -14,6 +14,8 @@ LangChain 库内部自动检测环境变量:
 检测到这些变量后，所有 LangChain 调用自动上报到 LangSmith
 ```
 
+> 本项目中 `LANGSMITH_TRACING` 默认为 `false`（默认关闭），启用需手动改为 `true`，详见 2.2 节。
+
 ## 二、修改了什么
 
 ### 2.1 文件改动
@@ -29,12 +31,16 @@ LangChain 库内部自动检测环境变量:
 ### 2.2 .env 新增内容
 
 ```bash
-# LangSmith 可观测性
-LANGSMITH_TRACING=true
+# LangSmith 可观测性（可选）
+LANGSMITH_TRACING=false
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=lsv2_pt_your_langsmith_api_key
+LANGSMITH_API_KEY=your_langsmith_api_key_here
 LANGSMITH_PROJECT=drama-agent
 ```
+
+> 注意：`LANGSMITH_TRACING` **默认为 `false`（默认关闭）**。
+> LangSmith 属于可选的可观测性组件，且上报会把 Prompt/输出内容发往外部服务，
+> 因此 `.env` / `.env.example` 中默认不开启。要启用需手动改为 `true` 并填入有效 key。
 
 ### 2.3 为什么不需要改代码
 
@@ -46,7 +52,12 @@ config.py 中已有环境变量加载机制:
           key, value = line.split("=", 1)
           os.environ.setdefault(key.strip(), value.strip())
 
-  _load_env()  ← 启动时自动执行
+  _load_env()  ← 模块级调用：import config 时立即执行，
+                  而不是等到启动某个函数时才执行
+
+触发时机（import 链）:
+  main.py → import agent_workflow → import config → _load_env() 执行
+  即应用进程一启动，.env 中的 LANGSMITH_* 变量就已进入 os.environ
 
 .env 中的 LANGSMITH_* 变量被加载到 os.environ
 LangChain 库内部读取 os.environ 自动开启 tracing
@@ -56,16 +67,19 @@ LangChain 库内部读取 os.environ 自动开启 tracing
 
 ### 3.1 配置加载链路
 
+以下链路以「已手动开启」（.env 中 `LANGSMITH_TRACING=true`）为前提：
+
 ```
 应用启动
   │
   ▼
-config.py._load_env()
+import config 时执行 config.py._load_env()
   │ 读取 .env 文件
-  │ 设置 os.environ["LANGSMITH_TRACING"] = "true"
-  │ 设置 os.environ["LANGSMITH_API_KEY"] = "lsv2_pt_..."
-  │ 设置 os.environ["LANGSMITH_PROJECT"] = "drama-agent"
-  │ 设置 os.environ["LANGSMITH_ENDPOINT"] = "https://api.smith.langchain.com"
+  │ os.environ.setdefault("LANGSMITH_TRACING", "true")
+  │   （setdefault：shell 中已导出的同名环境变量优先，不会被 .env 覆盖）
+  │ os.environ.setdefault("LANGSMITH_API_KEY", "lsv2_pt_...")
+  │ os.environ.setdefault("LANGSMITH_PROJECT", "drama-agent")
+  │ os.environ.setdefault("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
   │
   ▼
 LangChain 库检测环境变量
@@ -132,6 +146,8 @@ agent_workflow.py 中的 LLM 调用:
 
 ### 4.1 每次 LLM 调用
 
+（以下为 LangSmith 页面上一条 run 记录的示例，token/延迟等为演示数据）
+
 ```
 Run: ChatOpenAI
 ├─ Input:
@@ -149,24 +165,32 @@ Run: ChatOpenAI
 
 ### 4.2 完整工作流链路
 
+（演示数据。质量检查为 100 分制纯扣分：零问题 = 100 分直接通过；
+低于 70 分回溯重试（最多 2 次），回溯路径为 quality_check → retry_increment → retrieve。
+质量达标后：自动模式（run_workflow）跳过 human_review 直达 generate；
+人工介入模式暂停在 human_review 等待审批）
+
 ```
-Run: run_workflow
+Run: run_workflow（自动模式）
 ├─ node_analyze
 │    └─ ChatOpenAI (1.5s, 700 tokens)
 ├─ node_retrieve
 │    ├─ VectorStore.search (0.2s)
 │    └─ ChatOpenAI (1.2s, 600 tokens)
 ├─ node_quality_check
-│    └─ score=45, route=retrieve
-├─ (回溯重试)
-│    ├─ node_retrieve
-│    │    └─ ChatOpenAI (1.1s, 580 tokens)
-│    └─ node_quality_check
-│         └─ score=70, route=human_review
-├─ node_human_review
-│    └─ paused, approved=true
+│    └─ score=45, route=retrieve（45 < 70，回溯）
+├─ node_retry_increment
+│    └─ retry_count: 0 → 1（回溯留痕到执行步骤）
+├─ node_retrieve（回溯重试）
+│    └─ ChatOpenAI (1.1s, 580 tokens)
+├─ node_quality_check
+│    └─ score=72, route=generate（达标，自动模式跳过人工审核）
 └─ node_generate
      └─ ChatOpenAI (2.3s, 900 tokens)
+
+人工介入模式（run_workflow_with_interrupt）差异：
+  质量达标后 route=human_review，工作流暂停等待审批；
+  审批通过 → node_generate；打回 → 带「人工反馈」重新 node_retrieve
 ```
 
 ### 4.3 可用功能
@@ -207,3 +231,35 @@ LangSmith 路径:
 
 两个路径独立，互不影响
 ```
+
+## 七、验证接入与常见问题
+
+### 7.1 如何验证接入成功
+
+1. 确认 `.env` 中 `LANGSMITH_TRACING=true` 且 `LANGSMITH_API_KEY` 为有效 key（`lsv2_pt_` 开头）；
+2. 重启服务（环境变量在 import 时加载，改完 `.env` 必须重启进程才生效，见 7.3）；
+3. 在前端提交一次素材分析，触发真实 LLM 调用；
+4. 打开 [smith.langchain.com](https://smith.langchain.com) → 左侧 **Projects** 页：
+   应能看到 `drama-agent` 项目（由 `LANGSMITH_PROJECT` 指定）出现新的 run 记录，
+   点进去可看到 `ChatOpenAI` 的输入 Prompt 与输出 JSON。
+
+只要 Projects 页有 run 记录在持续产生，即说明接入成功。
+
+### 7.2 常见问题排查
+
+| 现象 | 可能原因 | 处理方式 |
+|------|----------|----------|
+| Projects 页没有任何 run 记录 | `LANGSMITH_TRACING` 仍为 `false`（默认关闭） | 改为 `true` 并重启服务 |
+| 没有记录，但工作流能跑通 | LLM 调用失败走了 mock 兜底，根本没有真实 LLM 调用 | 检查 `LLM_API_KEY`；前端执行步骤的徽章会标注「兜底演示数据」 |
+| 上报报 401 / 认证失败 | `LANGSMITH_API_KEY` 无效或已过期 | 到 LangSmith 设置页重新生成 key（`lsv2_pt_` 开头） |
+| 完全没有网络请求发出 | 代理/防火墙拦截 `api.smith.langchain.com` | 配置 `HTTPS_PROXY` 环境变量或更换网络环境 |
+| key 被系统环境变量覆盖 | shell 已导出同名变量，`.env` 不生效 | `_load_env()` 用 `setdefault`，系统环境变量优先；检查 `os.environ` |
+
+### 7.3 .env 的加载时机（易踩坑）
+
+`.env` 由 `config.py` 的 `_load_env()` 加载，该函数是**模块级调用——`import config` 时立即执行**。
+本项目 `main.py → import agent_workflow → import config`，因此进程启动的瞬间 `.env` 就已加载完毕。
+
+推论：
+- 修改 `.env` 后**必须重启服务**，运行中的进程不会重新读取；
+- `_load_env()` 内部用的是 `os.environ.setdefault()`，shell 中已导出的同名环境变量优先级高于 `.env`。

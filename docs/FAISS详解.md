@@ -55,8 +55,9 @@ for ref in refs:
     text = f"{ref.title} {ref.hook_text} {ref.asr_text} {' '.join(ref.tags or [])}"
 
     # 调用阿里云 API，文本 → 1024 维向量
+    # （API 失败时降级返回随机向量，并置 self.degraded = True，影响见第四步）
     vec = self._get_embedding(text)
-    # vec = [0.0123, -0.0456, 0.0789, ..., -0.0321]  (1024 个浮点数)
+    # vec = [0.0123, -0.0456, 0.0789, ..., -0.0321]  (1024 个浮点数, 演示数值)
 
     vectors.append(vec)
 
@@ -86,19 +87,23 @@ self.index.add(vectors_np)
 # 把 6 个 1024 维向量加入索引
 # 内部存储: 一个 (6, 1024) 的 float32 数组
 
-# 第四步: 持久化到磁盘
-faiss.write_index(self.index, "data/faiss_index.index")
-# 写入二进制文件，包含索引类型 + 向量数据
+# 第四步: 持久化到磁盘（前提: self.degraded 为 False，即全程未用到随机向量降级）
+if not self.degraded:
+    faiss.write_index(self.index, "data/faiss_index.index")
+    # 写入二进制文件，包含索引类型 + 向量数据
 
-with open("data/faiss_index.meta", "w") as f:
-    json.dump(self.metadata, f)
-# 元数据单独存 JSON，与向量数组下标一一对应
+    with open("data/faiss_index.meta", "w", encoding="utf-8") as f:
+        json.dump(self.metadata, f, ensure_ascii=False)
+    # 元数据单独存 JSON，与向量数组下标一一对应
+# 若 degraded=True（Embedding API 失败用了随机向量），则跳过持久化——
+# 随机向量索引对语义检索毫无意义，落盘会留下"永久噪声索引"，
+# API 恢复后重启服务会自动重建真实索引
 ```
 
 ### 2.3 索引结构图
 
 ```
-faiss_index.index 文件内容:
+faiss_index.index 文件内容（向量数值为演示示意，非真实 embedding 输出）:
 ┌─────────────────────────────────────────────────────┐
 │ 索引头: IndexFlatIP, dim=1024, metric=InnerProduct  │
 ├─────────────────────────────────────────────────────┤
@@ -132,54 +137,80 @@ faiss_index.meta 文件内容:
 ```python
 def search(self, query, category=None, sub_category=None, top_k=3):
 
-    # Step 1: 元数据预过滤（在 Python 内存中）
-    candidates = list(range(len(self.metadata)))
-    # candidates = [0, 1, 2, 3, 4, 5]  → 全部下标
-
-    if category:
-        candidates = [i for i in candidates if self.metadata[i]["category"] == category]
-        # category="男频" → candidates = [0, 1, 2]
-
-    if sub_category:
-        candidates = [i for i in candidates if self.metadata[i]["sub_category"] == sub_category]
-        # sub_category="逆袭" → candidates = [0]
+    # Step 1: 元数据预过滤（_filter_candidates，在 Python 内存中）
+    candidates = self._filter_candidates(category, sub_category)
+    # 内部逻辑: 先取全部下标 [0, 1, 2, 3, 4, 5]
+    #   category="男频"    → [0, 1, 2]
+    #   sub_category="逆袭" → [0]
+    # 特殊处理: 过滤结果为空时回退全量候选集并记 warning
+    #   （避免赛道判断失误导致本次检索空手而归）
 
     # Step 2: 查询文本 → 向量
-    query_vec = self._get_embedding(query)
-    # "逆袭打脸" → [0.111, -0.222, 0.333, ..., -0.444]  (1024 维)
-    query_vec = np.array([query_vec], dtype="float32")  # shape: (1, 1024)
-    faiss.normalize_L2(query_vec)  # 归一化
+    query_vec = np.array([self._get_embedding(query)], dtype="float32")
+    # "逆袭打脸" → [0.111, -0.222, 0.333, ..., -0.444]  (1024 维, 演示数值)
+    faiss.normalize_L2(query_vec)  # 归一化, shape: (1, 1024)
 
-    # Step 3: FAISS 向量搜索
+    # Step 3: 向量检索 —— 按候选集大小分两条路径
     if len(candidates) <= top_k:
-        # 候选集比 top_k 还小，直接返回
-        results = [self.metadata[i] for i in candidates]
+        # 路径 A: 候选集不大于 top_k，逐点计算内积（不走 FAISS search）
+        results = self._search_small(query_vec, candidates)
     else:
-        # 在候选集内搜索
-        selector = faiss.IDSelectorArray(candidates)
-        # IDSelectorArray([0, 1, 2]) → 只允许在下标 0, 1, 2 中搜索
+        # 路径 B: 候选集大于 top_k，让 FAISS 带 selector 过滤检索
+        results = self._search_faiss(query_vec, candidates, top_k)
 
-        params = faiss.SearchParameters()
-        params.sel = selector
-        # 把 selector 绑到搜索参数上
-
-        scores, indices = self.index.search(query_vec, top_k, params=params)
-        # search(query_vec, k=3, params=selector)
-        # 返回:
-        #   scores  = [[0.87, 0.76, 0.71]]  → 3 个相似度分数
-        #   indices = [[0, 2, 1]]            → 3 个下标
-
-        # Step 4: 组装结果
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx >= 0 and idx in candidates:
-                item = {**self.metadata[idx], "similarity": float(score)}
-                results.append(item)
-
-    # Step 5: 按业务分数排序（数据飞轮权重）
+    # Step 4: 按业务分数排序（数据飞轮权重），截断到 top_k
     results.sort(key=lambda x: x.get("score", 0), reverse=True)
     return results[:top_k]
 ```
+
+两条检索路径的逐行解析（对应 `vector_store.py` 的 `_search_small` 与 `_search_faiss`）:
+
+```python
+def _search_small(self, query_vec, candidates):
+    """路径 A: 逐个取回候选向量，用 numpy 算内积"""
+    results = []
+    for i in candidates:
+        item = {**self.metadata[i]}
+        vec = np.array([self.index.reconstruct(i)], dtype="float32")
+        # reconstruct(i): 从索引中取回第 i 条原始向量
+        # （Flat 索引原样存储向量，取回无损）
+        item["similarity"] = float(np.dot(query_vec[0], vec[0]))
+        # 归一化后内积 = 余弦相似度
+        results.append(item)
+    return results
+    # 候选集一共就 top_k 条左右，逐点计算比走 FAISS 检索更直接，
+    # 且天然保留全部候选——不是"直接返回原样数据"，相似度照样要算
+
+def _search_faiss(self, query_vec, candidates, top_k):
+    """路径 B: 用 IDSelectorArray 把候选集"注入"FAISS 检索"""
+    selector = faiss.IDSelectorArray(candidates)
+    # IDSelectorArray([0, 1, 2]) → 只允许在下标 0, 1, 2 中搜索
+
+    params = faiss.SearchParameters()
+    params.sel = selector
+    # 把 selector 绑到搜索参数上
+
+    scores, indices = self.index.search(
+        query_vec, min(top_k * 2, len(candidates)), params=params
+    )
+    # 请求量取 top_k 的 2 倍（不超过候选集大小）作缓冲
+    # 返回（演示数值）:
+    #   scores  = [[0.87, 0.76, 0.71]]  → 相似度分数
+    #   indices = [[0, 2, 1]]           → 对应向量下标
+
+    results = []
+    for score, idx in zip(scores[0], indices[0]):
+        if idx >= 0 and idx in candidates:
+            # idx >= 0: FAISS 结果不足 k 个时用 -1 填充，需排除
+            results.append({**self.metadata[idx], "similarity": float(score)})
+            if len(results) >= top_k:
+                break
+    return results
+```
+
+**为什么要分两条路径？**
+- 候选集很小（≤ top_k）时，反正整个候选集基本都要留下，直接 `reconstruct` + `np.dot` 逐点算最简单，还避开了 FAISS search 结果不足 k 个时的 -1 填充等边界情况
+- 候选集大时，逐点把向量拉回 Python 的开销变大，交给 FAISS 在 C++ 层"过滤 + 检索"一步完成，只拿回少量结果
 
 ### 3.2 搜索过程图解
 
@@ -194,24 +225,26 @@ Step 1: 元数据预过滤
 Step 2: 查询向量化
   "逆袭打脸" → Embedding API → [0.111, -0.222, ...] → L2归一化
 
-Step 3: FAISS 暴力搜索（在候选集内）
-  计算查询向量与候选集每个向量的内积:
+Step 3: 向量相似度计算（候选集 3 条 ≤ top_k=3，走 _search_small 路径）
+  逐个取回候选向量（reconstruct），计算查询向量与它的内积:
 
   下标 0 (赘婿逆袭): 内积 = 0.87  ← 最相似
   下标 2 (龙王令):    内积 = 0.76
   下标 1 (战神归来):  内积 = 0.71
 
-Step 4: 组装结果
+Step 4: 按 score 排序（数据飞轮权重）+ 截断 top_k
+  组装结果:
   [
     {"title": "赘婿逆袭", "similarity": 0.87, "score": 92.0},
     {"title": "龙王令",   "similarity": 0.76, "score": 85.0},
     {"title": "战神归来", "similarity": 0.71, "score": 88.0},
   ]
 
-Step 5: 按 score 排序
   赘婿逆袭 (score=92.0) → 第 1
   战神归来 (score=88.0) → 第 2
   龙王令   (score=85.0) → 第 3
+
+（图中数值均为演示数据，非真实运行结果）
 ```
 
 ---
@@ -262,15 +295,21 @@ IP   = Inner Product (内积)
 
 | 索引类型 | 原理 | 搜索速度 | 精度 | 内存 | 适用场景 |
 |----------|------|---------|------|------|---------|
-| **IndexFlatIP** | 暴力逐一计算 | 最慢 | 100% 精确 | 低 | 本系统 (6条) |
-| IndexIVFFlat | 先聚类再搜索 | 快 | 高 | 中 | 百万级 |
-| IndexIVFPQ | 聚类+乘积量化 | 最快 | 有损 | 最低 | 亿级 |
-| IndexHNSW | 图索引 | 很快 | 很高 | 高 | 高召回率 |
+| **IndexFlatIP** | 暴力逐一计算 | 最慢 | 100% 精确 | 高（全量原始向量常驻） | 本系统 (6条) |
+| IndexIVFFlat | 先聚类再搜索 | 快 | 高 | 高（全量向量 + 倒排列表） | 百万级 |
+| IndexIVFPQ | 聚类+乘积量化 | 最快 | 有损 | 低（只存压缩编码） | 亿级 |
+| IndexHNSW | 图索引 | 很快 | 很高 | 中~高（全量向量 + 图连接，配 SQ/PQ 压缩可降） | 高召回率 |
+
+内存一列的反直觉之处: Flat 听起来"最简单"，却要把**全部原始向量**原样放进内存，
+所以内存反而是最高的一档；IVFFlat 在此之上还要多存一份倒排结构，内存只多不少；
+真正省内存的是 IVFPQ 这类量化索引（向量被压缩成短编码）；HNSW 无压缩时同样要存
+全量向量外加图的邻接表，配合量化压缩才能降到中等水平。
 
 本系统选 IndexFlatIP 的原因:
 1. 数据量极小 (6 条)，暴力搜索毫秒级
 2. 精度最高，没有近似误差
 3. 不需要训练，构建即用
+4. 内存虽属"最高"档，但 6 条 × 1024 维 × 4 字节 ≈ 24 KB，完全可忽略
 
 ---
 
@@ -279,18 +318,24 @@ IP   = Inner Product (内积)
 ### 5.1 不支持 CRUD
 
 ```python
-# 只能追加，不能修改或删除
+# 没有 update，删除也不便宜
 index.add(new_vectors)       # ✅ 追加
-index.remove_ids(ids)        # ⚠️ 仅 IndexFlat 支持，且效率低
-# index.update(id, new_vec)  # ❌ 不支持
+index.remove_ids(ids)        # ⚠️ Flat / IVF / HNSW 等多数索引都支持（并非仅 Flat），
+                             #    但删除要重排索引内部存储，效率不高
+# index.update(id, new_vec)  # ❌ 不存在这个 API
 
 # 修改一条数据的实际操作:
-# 1. 重建整个索引
+# 1. 重建整个索引（本系统 build_index 的做法，数据量小时最省心）
 all_vectors = get_all_vectors()
 index = faiss.IndexFlatIP(1024)
 index.add(all_vectors)
 
-# 2. 或者用 IDMap 包装（但性能差）
+# 2. 或者用 IndexIDMap 包装，让索引按"业务 ID"而非位置管理向量
+index = faiss.IndexIDMap(faiss.IndexFlatIP(1024))
+index.add_with_ids(vectors, ids)   # 之后 index.remove_ids([业务id]) 即可删除
+# 注意: IDMap 的作用是给"天生没有 ID 的索引"附加一层
+#       业务 ID → 内部位置 的映射表，补齐 add_with_ids / remove_ids 能力，
+#       它不是性能优化手段，selector 过滤检索与 IDMap 是两套互不相关的机制
 ```
 
 ### 5.2 元数据与向量分离
@@ -317,16 +362,22 @@ FAISS 索引文件:           元数据 JSON 文件:
 ```python
 # FAISS 不能直接做: "找 category=男频 且 最相似的向量"
 
-# 只能两步走:
+# 只能两步走（对应本系统 _filter_candidates + _search_faiss 的做法）:
 # Step 1: Python 过滤出候选集
 candidates = [i for i in range(n) if metadata[i]["category"] == "男频"]
 
 # Step 2: 在候选集内搜索
 selector = faiss.IDSelectorArray(candidates)
-scores, indices = index.search(query_vec, k, params={sel: selector})
+params = faiss.SearchParameters()
+params.sel = selector
+scores, indices = index.search(query_vec, k, params=params)
+# 注意: 不能写成 params={sel: selector} —— sel 是未定义变量，求值时直接 NameError；
+#       即便写对键名 {'sel': selector}，FAISS 也不接受字典形式的 params，会抛 TypeError。
+#       与本系统完全一致的写法见 vector_store.py 的 _search_faiss()
 
 # 问题: 数据量大时，Step 1 的 Python 遍历很慢
-# ES 用 bitset 做 filter，O(1) 命中
+# ES 把 filter 命中结果缓存在 bitset 里，单条是否命中只需一次位运算，
+# 且可跨查询复用；而这里的 Step 1 每次查询都要重新遍历一遍
 ```
 
 ---

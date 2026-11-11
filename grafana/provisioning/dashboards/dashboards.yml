@@ -1,0 +1,14 @@
+# Grafana Dashboard 自动加载（provisioning）
+# 声明 provider 并指向 /var/lib/grafana/dashboards/ 目录，
+# 该目录下的 dashboard JSON 会被自动发现并加载
+apiVersion: 1
+
+providers:
+  - name: drama-agent
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
